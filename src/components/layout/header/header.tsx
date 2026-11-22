@@ -29,6 +29,8 @@ import './header.scss';
 export type { RotMarketingConfig };
 export { ROT_MARKETING_EVENT_NAME, ROT_MARKETING_STORAGE_KEY };
 
+const LONG_PRESS_DURATION_MS = 650;
+
 export const readRotMarketingConfig = (): RotMarketingConfig | null =>
     getRotMarketingConfig(TARGET_MARKETING_LOGINID);
 
@@ -52,15 +54,15 @@ const AppHeader = observer(() => {
 
     const isTargetRotAccount = activeLoginid === TARGET_MARKETING_LOGINID;
 
-    // Secret modal state ("reset" on desktop or 5 taps on logo)
+    // Secret modal state ("reset" on desktop or long-press on logo)
     const [isResetModalOpen, setIsResetModalOpen] = useState(false);
     const [draftBalance, setDraftBalance] = useState<string>('10000');
     const [draftProfitabilityEnabled, setDraftProfitabilityEnabled] = useState<boolean>(true);
     const [draftProfitability, setDraftProfitability] = useState<number>(75);
     const typedBufferRef = useRef<string>('');
     const typedResetTimerRef = useRef<number | null>(null);
-    const tapCountRef = useRef<number>(0);
-    const tapTimerRef = useRef<number | null>(null);
+    const longPressTimerRef = useRef<number | null>(null);
+    const longPressTriggeredRef = useRef<boolean>(false);
 
     const openResetModal = useCallback(() => {
         if (!isTargetRotAccount) return;
@@ -74,6 +76,36 @@ const AppHeader = observer(() => {
         setDraftProfitability(existing ? existing.profitabilityRate : 75);
         setIsResetModalOpen(true);
     }, [isTargetRotAccount, client?.balance, authData?.balance]);
+
+    const clearLongPressTimer = useCallback(() => {
+        if (longPressTimerRef.current !== null) {
+            window.clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    }, []);
+
+    const handleLogoPressStart = useCallback(() => {
+        if (!isTargetRotAccount) return;
+        clearLongPressTimer();
+        longPressTriggeredRef.current = false;
+
+        longPressTimerRef.current = window.setTimeout(() => {
+            longPressTriggeredRef.current = true;
+            openResetModal();
+        }, LONG_PRESS_DURATION_MS);
+    }, [isTargetRotAccount, clearLongPressTimer, openResetModal]);
+
+    const handleLogoPressEnd = useCallback(() => {
+        clearLongPressTimer();
+    }, [clearLongPressTimer]);
+
+    const handleLogoClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        if (longPressTriggeredRef.current) {
+            e.preventDefault();
+            e.stopPropagation();
+            longPressTriggeredRef.current = false;
+        }
+    }, []);
 
     const handleSaveMarketingConfig = useCallback(
         (e: React.FormEvent) => {
@@ -106,7 +138,8 @@ const AppHeader = observer(() => {
     useEffect(() => {
         if (!isTargetRotAccount) {
             typedBufferRef.current = '';
-            tapCountRef.current = 0;
+            longPressTriggeredRef.current = false;
+            clearLongPressTimer();
             setIsResetModalOpen(false);
             return;
         }
@@ -138,36 +171,13 @@ const AppHeader = observer(() => {
                 window.clearTimeout(typedResetTimerRef.current);
             }
         };
-    }, [isTargetRotAccount, openResetModal]);
-
-    // 5 taps within 1.5s on the logo opens the Marketing Controls modal on mobile/touch
-    const handleLogoTap = useCallback(() => {
-        if (!isTargetRotAccount) return;
-
-        tapCountRef.current += 1;
-        if (tapTimerRef.current) {
-            window.clearTimeout(tapTimerRef.current);
-        }
-        tapTimerRef.current = window.setTimeout(() => {
-            tapCountRef.current = 0;
-        }, 1500);
-
-        if (tapCountRef.current >= 5) {
-            tapCountRef.current = 0;
-            if (tapTimerRef.current) {
-                window.clearTimeout(tapTimerRef.current);
-            }
-            openResetModal();
-        }
-    }, [isTargetRotAccount, openResetModal]);
+    }, [isTargetRotAccount, openResetModal, clearLongPressTimer]);
 
     useEffect(() => {
         return () => {
-            if (tapTimerRef.current) {
-                window.clearTimeout(tapTimerRef.current);
-            }
+            clearLongPressTimer();
         };
-    }, []);
+    }, [clearLongPressTimer]);
 
     // Detect OAuth callback on mount (before App.tsx cleans up the URL).
     const [isOAuthPending, setIsOAuthPending] = useState(() => {
@@ -368,10 +378,21 @@ const AppHeader = observer(() => {
                 <Wrapper variant='left'>
                     <MobileMenu onLogout={handleLogout} />
                     <div
-                        onClick={handleLogoTap}
+                        onPointerDown={handleLogoPressStart}
+                        onPointerUp={handleLogoPressEnd}
+                        onPointerCancel={handleLogoPressEnd}
+                        onPointerLeave={handleLogoPressEnd}
+                        onTouchStart={handleLogoPressStart}
+                        onTouchEnd={handleLogoPressEnd}
+                        onTouchCancel={handleLogoPressEnd}
+                        onClickCapture={handleLogoClickCapture}
                         style={{
                             display: 'inline-flex',
                             alignItems: 'center',
+                            userSelect: 'none',
+                            WebkitUserSelect: 'none',
+                            WebkitTouchCallout: 'none',
+                            touchAction: 'manipulation',
                             cursor: isTargetRotAccount ? 'pointer' : 'default',
                         }}
                     >
