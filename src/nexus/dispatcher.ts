@@ -317,7 +317,7 @@ const registerSimulatedState = (
         if (currentSim && !currentSim.settled) {
             settleSimulatedContract(currentSim);
         }
-    }, 1400);
+    }, 1200);
 };
 
 const flushBatch = () => {
