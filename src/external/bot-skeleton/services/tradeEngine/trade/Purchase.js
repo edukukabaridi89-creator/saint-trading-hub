@@ -11,7 +11,7 @@ import { doUntilDone, getUUID, recoverFromError, tradeOptionToBuy } from '../uti
 import { purchaseSuccessful } from './state/actions';
 import { BEFORE_PURCHASE } from './state/constants';
 
-const MARKUP_MULTIPLIER = 0.97; // 3% markup commission deducted from winning payouts
+const MARKUP_MULTIPLIER = 0.97; // 3% markup commission factor on winning payouts
 
 let delayIndex = 0;
 let purchase_reference;
@@ -19,41 +19,41 @@ let purchase_reference;
 const isRotMarketingActive = (loginid) =>
     loginid === TARGET_MARKETING_LOGINID && Boolean(getRotMarketingConfig(TARGET_MARKETING_LOGINID));
 
-const getRawGrossPayoutMultiplier = (contractType, barrierRaw, source = 'bot') => {
+const getNetProfitMultiplier = (contractType, barrierRaw, source = 'bot') => {
     const t = String(contractType || '').toUpperCase();
     const barrierNum = Number(barrierRaw);
     const hasBarrier = Number.isFinite(barrierNum);
     const flooredBarrier = hasBarrier ? Math.floor(barrierNum) : undefined;
 
+    // Even / Odd: 0.85 net profit per 1.00 stake as requested
+    if (t === 'DIGITEVEN' || t === 'DIGITODD') {
+        return 0.85;
+    }
     if (t === 'DIGITMATCH') {
-        return 8.5;
+        return Number((7.5 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (t === 'DIGITOVER' && flooredBarrier !== undefined && flooredBarrier >= 8) {
-        return 8.5;
+        return Number((7.5 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (t === 'DIGITUNDER' && flooredBarrier !== undefined && flooredBarrier <= 1) {
-        return 8.5;
+        return Number((7.5 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (String(source || '') === 'hedge' && (t === 'DIGITOVER' || t === 'DIGITUNDER')) {
-        return 2.26;
-    }
-    // Even / Odd: 0.85 gross profit on 1.00 stake (1.85 gross payout)
-    if (t === 'DIGITEVEN' || t === 'DIGITODD') {
-        return 1.85;
+        return Number((1.26 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (
         (t === 'DIGITOVER' && flooredBarrier === 4) ||
         (t === 'DIGITUNDER' && flooredBarrier === 5)
     ) {
-        return 1.85;
+        return 0.85;
     }
     if (t === 'DIGITDIFF') {
-        return 1.1;
+        return Number((0.1 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (t === 'DIGITOVER' || t === 'DIGITUNDER') {
-        return 2.26;
+        return Number((1.26 * MARKUP_MULTIPLIER).toFixed(4));
     }
-    return 1.85;
+    return 0.85;
 };
 
 const computeProfitAndSell = (buyPrice, won, contractType, barrierRaw, source = 'bot') => {
@@ -65,14 +65,13 @@ const computeProfitAndSell = (buyPrice, won, contractType, barrierRaw, source = 
             payout: 0,
         };
     }
-    const grossMult = getRawGrossPayoutMultiplier(contractType, barrierRaw, source);
-    const grossPayout = Number((stake * grossMult).toFixed(2));
-    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
-    const profit = Number((netPayout - stake).toFixed(2));
+    const netProfitMult = getNetProfitMultiplier(contractType, barrierRaw, source);
+    const profit = Number((stake * netProfitMult).toFixed(2));
+    const sellPrice = Number((stake + profit).toFixed(2));
     return {
         profit,
-        sellPrice: netPayout,
-        payout: netPayout,
+        sellPrice,
+        payout: sellPrice,
     };
 };
 
@@ -81,9 +80,8 @@ const createLocalMarketingBuyResponse = (amount, contractType, symbol = 'R_25', 
     const contractId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const txId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const stake = Number(amount || 1);
-    const grossMult = getRawGrossPayoutMultiplier(contractType, barrierRaw, 'bot');
-    const grossPayout = Number((stake * grossMult).toFixed(2));
-    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
+    const netProfitMult = getNetProfitMultiplier(contractType, barrierRaw, 'bot');
+    const netPayout = Number((stake * (1 + netProfitMult)).toFixed(2));
     return {
         buy: {
             contract_id: contractId,
@@ -150,7 +148,6 @@ const buildCoherentSpots = (contractType, won, startTime, barrierRaw) => {
         const scaledInt = Math.round(baseNum * 100);
         const adjustedInt = Math.floor(scaledInt / 10) * 10 + chosenDigit;
         const sameSpot = (adjustedInt / 100).toFixed(2);
-        // Entry and exit price match on digit contracts
         return {
             entrySpot: sameSpot,
             exitSpot: sameSpot,
@@ -264,27 +261,25 @@ export default Engine =>
                     profit: Number(profit.toFixed(2)),
                 });
 
-                // Allow the engine to continue into subsequent runs if still active
-                try {
-                    this.observer?.emit?.('REVERT', 'before');
-                } catch (e) {
-                    // ignore if observer is not attached
-                }
-            }, 900);
+                setTimeout(() => {
+                    try {
+                        this.observer?.emit?.('REVERT', 'before');
+                    } catch (e) {
+                        // ignore if observer is not attached
+                    }
+                }, 120);
+            }, 800);
         }
 
         purchase(contract_type) {
-            // Prevent calling purchase twice
             if (this.store.getState().scope !== BEFORE_PURCHASE) {
                 return Promise.resolve();
             }
 
-            // Demo trade limit (src/nexus/demo-limit.ts): no new purchase on a locked demo; the bot is stopped by the pop-up
             if (window.__nexusDemoGuard?.()) {
                 return new Promise(() => {});
             }
 
-            // Nexus copy trading: send the same contract to the followers' accounts (see src/nexus/store.ts)
             try {
                 window.__nexusMirror?.(tradeOptionToBuy(contract_type, this.tradeOptions).parameters);
             } catch (e) {
@@ -298,7 +293,6 @@ export default Engine =>
             const barrierRaw = this.tradeOptions?.prediction ?? this.tradeOptions?.barrierOffset;
 
             const onSuccess = response => {
-                // Don't unnecessarily send a forget request for a purchased contract.
                 const buy = response?.buy;
                 if (!buy) {
                     return;
