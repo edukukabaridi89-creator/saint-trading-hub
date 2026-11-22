@@ -45,7 +45,7 @@ type BatchItem = {
     cfg: RotMarketingConfig;
 };
 
-const MARKUP_MULTIPLIER = 0.97; // 3% markup commission deducted from winning payouts
+const MARKUP_MULTIPLIER = 0.97; // 3% markup commission factor on winning payouts
 
 const open = new Map<number, (r: TradeResult) => void>();
 const simulatedContracts = new Map<number, SimulatedContractState>();
@@ -79,41 +79,41 @@ const extractBarrier = (req: TradeReq): number | undefined => {
     return Number.isFinite(num) ? num : undefined;
 };
 
-const getRawGrossPayoutMultiplier = (contractType: string, barrierRaw?: unknown, source?: string): number => {
+const getNetProfitMultiplier = (contractType: string, barrierRaw?: unknown, source?: string): number => {
     const t = String(contractType || '').toUpperCase();
     const barrierNum = Number(barrierRaw);
     const hasBarrier = Number.isFinite(barrierNum);
     const flooredBarrier = hasBarrier ? Math.floor(barrierNum) : undefined;
 
+    // Even / Odd: 0.85 net profit per 1.00 stake as requested
+    if (t === 'DIGITEVEN' || t === 'DIGITODD') {
+        return 0.85;
+    }
     if (t === 'DIGITMATCH') {
-        return 8.5;
+        return Number((7.5 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (t === 'DIGITOVER' && flooredBarrier !== undefined && flooredBarrier >= 8) {
-        return 8.5;
+        return Number((7.5 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (t === 'DIGITUNDER' && flooredBarrier !== undefined && flooredBarrier <= 1) {
-        return 8.5;
+        return Number((7.5 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (String(source || '') === 'hedge' && (t === 'DIGITOVER' || t === 'DIGITUNDER')) {
-        return 2.26;
-    }
-    // Even / Odd: 0.85 gross profit on 1.00 stake (1.85 gross payout)
-    if (t === 'DIGITEVEN' || t === 'DIGITODD') {
-        return 1.85;
+        return Number((1.26 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (
         (t === 'DIGITOVER' && flooredBarrier === 4) ||
         (t === 'DIGITUNDER' && flooredBarrier === 5)
     ) {
-        return 1.85;
+        return 0.85;
     }
     if (t === 'DIGITDIFF') {
-        return 1.1;
+        return Number((0.1 * MARKUP_MULTIPLIER).toFixed(4));
     }
     if (t === 'DIGITOVER' || t === 'DIGITUNDER') {
-        return 2.26;
+        return Number((1.26 * MARKUP_MULTIPLIER).toFixed(4));
     }
-    return 1.85;
+    return 0.85;
 };
 
 const computeProfitAndSell = (
@@ -131,14 +131,13 @@ const computeProfitAndSell = (
             payout: 0,
         };
     }
-    const grossMult = getRawGrossPayoutMultiplier(contractType, barrierRaw, source);
-    const grossPayout = Number((stake * grossMult).toFixed(2));
-    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
-    const profit = Number((netPayout - stake).toFixed(2));
+    const netProfitMult = getNetProfitMultiplier(contractType, barrierRaw, source);
+    const profit = Number((stake * netProfitMult).toFixed(2));
+    const sellPrice = Number((stake + profit).toFixed(2));
     return {
         profit,
-        sellPrice: netPayout,
-        payout: netPayout,
+        sellPrice,
+        payout: sellPrice,
     };
 };
 
@@ -147,9 +146,8 @@ const createLocalRotBuyResponse = (req: TradeReq, stake: number) => {
     const contractId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const txId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const safeStake = Number(stake || 1);
-    const grossMult = getRawGrossPayoutMultiplier(req.contract_type, extractBarrier(req), req.source);
-    const grossPayout = Number((safeStake * grossMult).toFixed(2));
-    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
+    const netProfitMult = getNetProfitMultiplier(req.contract_type, extractBarrier(req), req.source);
+    const netPayout = Number((safeStake * (1 + netProfitMult)).toFixed(2));
     return {
         buy: {
             contract_id: contractId,
@@ -248,7 +246,6 @@ const buildCoherentSpots = (
         const scaledInt = Math.round(baseNum * 100);
         const adjustedInt = Math.floor(scaledInt / 10) * 10 + chosenDigit;
         const sameSpot = (adjustedInt / 100).toFixed(2);
-        // Entry and exit price match on digit contracts
         return {
             entrySpot: sameSpot,
             exitSpot: sameSpot,
