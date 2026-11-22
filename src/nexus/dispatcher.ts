@@ -12,7 +12,7 @@ import { demoGuard } from './demo-limit';
 import { positions } from './positions';
 import { nexus } from './store';
 
-export type TradeReq = BuyRequest & { source: string }; // source: hedge | bulk | manual | auto | ...
+export type TradeReq = BuyRequest & { source: string }; // source: hedge | bulk | manual | auto | matches | alpha | ...
 export type TradeResult = { contract_id?: number; profit?: number; won?: boolean; error?: string };
 
 type SimulatedContractState = {
@@ -34,12 +34,30 @@ type SimulatedContractState = {
     settled: boolean;
 };
 
+type BatchItem = {
+    req: TradeReq;
+    buy: any;
+    buyPrice: number;
+    numericContractId: number;
+    numericBuyId: number;
+    startTime: number;
+    currency: string;
+    cfg: RotMarketingConfig;
+};
+
+const MARKUP_MULTIPLIER = 0.97; // 3% markup commission deducted from winning payouts
+
 const open = new Map<number, (r: TradeResult) => void>();
 const simulatedContracts = new Map<number, SimulatedContractState>();
 let wired_api: unknown = null;
 
+let pendingBatch: BatchItem[] = [];
+let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
 const send = (payload: object): Promise<any> =>
-    Promise.resolve(api_base.api.send(payload)).catch((e: any) => ({ error: e?.error ?? { message: e?.message ?? 'Request failed' } }));
+    Promise.resolve(api_base.api.send(payload)).catch((e: any) => ({
+        error: e?.error ?? { message: e?.message ?? 'Request failed' },
+    }));
 
 const syncMarketingClientBalance = (nextBalance: number | null) => {
     if (nextBalance === null || !Number.isFinite(nextBalance)) return;
@@ -54,26 +72,37 @@ const isRotMarketingActive = (): boolean => {
     return loginid === TARGET_MARKETING_LOGINID && Boolean(getRotMarketingConfig(TARGET_MARKETING_LOGINID));
 };
 
+const getRawGrossPayoutMultiplier = (contractType: string): number => {
+    const t = String(contractType || '').toUpperCase();
+    if (t === 'DIGITMATCH') return 8.5;
+    if (t === 'DIGITDIFF') return 1.1;
+    if (t === 'DIGITOVER' || t === 'DIGITUNDER') return 2.25;
+    return 1.95;
+};
+
 const createLocalRotBuyResponse = (req: TradeReq, stake: number) => {
     const nowSec = Math.floor(Date.now() / 1000);
     const contractId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const txId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const safeStake = Number(stake || 1);
+    const grossMult = getRawGrossPayoutMultiplier(req.contract_type);
+    const grossPayout = Number((safeStake * grossMult).toFixed(2));
+    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
     return {
         buy: {
             contract_id: contractId,
             transaction_id: txId,
             buy_price: safeStake,
-            payout: Number((safeStake * 1.92).toFixed(2)),
+            payout: netPayout,
             start_time: nowSec,
             shortcode: `${req.contract_type}_${req.symbol}_${contractId}`,
         },
     };
 };
 
-const decideRotOutcome = (cfg: RotMarketingConfig): boolean => {
+const shouldFavorWin = (cfg: RotMarketingConfig, naturalProb = 0.485): boolean => {
     if (!cfg.profitabilityEnabled) {
-        return Math.random() < 0.485;
+        return Math.random() < naturalProb;
     }
     const clamped = Math.max(0, Math.min(100, cfg.profitabilityRate));
     if (clamped <= 0) return false;
@@ -81,10 +110,38 @@ const decideRotOutcome = (cfg: RotMarketingConfig): boolean => {
     return Math.random() * 100 < clamped;
 };
 
-const pickDigitForContract = (contractType: string, won: boolean, barrierRaw?: unknown): number | null => {
-    const t = String(contractType || '').toUpperCase();
-    const barrierNum = Number(barrierRaw);
+const extractBarrier = (req: TradeReq): number | undefined => {
+    const raw = (req as any).barrier ?? (req as any).prediction;
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : undefined;
+};
 
+const doesContractWinForDigit = (contractType: string, digit: number, barrierRaw?: number): boolean => {
+    const t = String(contractType || '').toUpperCase();
+    if (t === 'DIGITEVEN') return digit % 2 === 0;
+    if (t === 'DIGITODD') return digit % 2 !== 0;
+    if (t === 'DIGITOVER') {
+        const barrier = typeof barrierRaw === 'number' ? Math.max(0, Math.min(8, Math.floor(barrierRaw))) : 5;
+        return digit > barrier;
+    }
+    if (t === 'DIGITUNDER') {
+        const barrier = typeof barrierRaw === 'number' ? Math.max(1, Math.min(9, Math.floor(barrierRaw))) : 4;
+        return digit < barrier;
+    }
+    if (t === 'DIGITMATCH') {
+        const target = typeof barrierRaw === 'number' ? Math.max(0, Math.min(9, Math.floor(barrierRaw))) : 5;
+        return digit === target;
+    }
+    if (t === 'DIGITDIFF') {
+        const target = typeof barrierRaw === 'number' ? Math.max(0, Math.min(9, Math.floor(barrierRaw))) : 5;
+        return digit !== target;
+    }
+    return false;
+};
+
+const pickDigitForContract = (contractType: string, won: boolean, barrierRaw?: number): number | null => {
+    const t = String(contractType || '').toUpperCase();
     if (t === 'DIGITEVEN') {
         const pool = won ? [0, 2, 4, 6, 8] : [1, 3, 5, 7, 9];
         return pool[Math.floor(Math.random() * pool.length)];
@@ -94,21 +151,21 @@ const pickDigitForContract = (contractType: string, won: boolean, barrierRaw?: u
         return pool[Math.floor(Math.random() * pool.length)];
     }
     if (t === 'DIGITOVER') {
-        const barrier = Number.isFinite(barrierNum) ? Math.max(0, Math.min(8, Math.floor(barrierNum))) : 4;
+        const barrier = typeof barrierRaw === 'number' ? Math.max(0, Math.min(8, Math.floor(barrierRaw))) : 5;
         const pool = won
             ? Array.from({ length: 9 - barrier }, (_, idx) => barrier + 1 + idx)
             : Array.from({ length: barrier + 1 }, (_, idx) => idx);
-        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 7 : 2;
+        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 7 : 4;
     }
     if (t === 'DIGITUNDER') {
-        const barrier = Number.isFinite(barrierNum) ? Math.max(1, Math.min(9, Math.floor(barrierNum))) : 5;
+        const barrier = typeof barrierRaw === 'number' ? Math.max(1, Math.min(9, Math.floor(barrierRaw))) : 4;
         const pool = won
             ? Array.from({ length: barrier }, (_, idx) => idx)
             : Array.from({ length: 10 - barrier }, (_, idx) => barrier + idx);
-        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 2 : 7;
+        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 2 : 5;
     }
     if (t === 'DIGITMATCH' || t === 'DIGITDIFF') {
-        const targetDigit = Number.isFinite(barrierNum) ? Math.max(0, Math.min(9, Math.floor(barrierNum))) : 5;
+        const targetDigit = typeof barrierRaw === 'number' ? Math.max(0, Math.min(9, Math.floor(barrierRaw))) : 5;
         const shouldMatchDigit = t === 'DIGITMATCH' ? won : !won;
         if (shouldMatchDigit) return targetDigit;
         const others = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(d => d !== targetDigit);
@@ -117,10 +174,21 @@ const pickDigitForContract = (contractType: string, won: boolean, barrierRaw?: u
     return null;
 };
 
-const buildCoherentSpots = (contractType: string, won: boolean, startTime: number, barrierRaw?: unknown) => {
-    const baseEntry = 100 + ((startTime % 850) + Math.random() * 40);
+const buildCoherentSpots = (
+    contractType: string,
+    won: boolean,
+    startTime: number,
+    barrierRaw?: number,
+    forcedExitDigit?: number | null,
+    sharedBaseEntry?: number
+) => {
+    const baseEntry =
+        typeof sharedBaseEntry === 'number'
+            ? sharedBaseEntry
+            : 100 + ((startTime % 850) + Math.random() * 40);
     const entrySpotNum = Number(baseEntry.toFixed(2));
-    const chosenDigit = pickDigitForContract(contractType, won, barrierRaw);
+    const chosenDigit =
+        typeof forcedExitDigit === 'number' ? forcedExitDigit : pickDigitForContract(contractType, won, barrierRaw);
 
     let exitSpotNum: number;
     if (chosenDigit !== null) {
@@ -142,6 +210,186 @@ const buildCoherentSpots = (contractType: string, won: boolean, startTime: numbe
         entrySpot: entrySpotNum.toFixed(2),
         exitSpot: exitSpotNum.toFixed(2),
     };
+};
+
+const computeProfitAndSell = (buyPrice: number, rawPayout: number, won: boolean, contractType: string) => {
+    if (!won) {
+        return {
+            profit: Number((-Math.abs(buyPrice)).toFixed(2)),
+            sellPrice: 0,
+            payout: 0,
+        };
+    }
+    const t = String(contractType || '').toUpperCase();
+    const grossMult = getRawGrossPayoutMultiplier(t);
+    const maxGross = t === 'DIGITMATCH' ? buyPrice * 12 : buyPrice * 5;
+    const minGross = buyPrice * 1.05;
+    const grossPayout =
+        rawPayout >= minGross && rawPayout <= maxGross
+            ? rawPayout
+            : Number((buyPrice * grossMult).toFixed(2));
+    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
+    const profit = Number((netPayout - buyPrice).toFixed(2));
+    return {
+        profit,
+        sellPrice: netPayout,
+        payout: netPayout,
+    };
+};
+
+const registerSimulatedState = (
+    item: BatchItem,
+    won: boolean,
+    forcedExitDigit?: number | null,
+    sharedBaseEntry?: number
+) => {
+    const rawPayout = Number(
+        item.buy.payout ?? item.buyPrice * getRawGrossPayoutMultiplier(item.req.contract_type)
+    );
+    const { profit, sellPrice, payout } = computeProfitAndSell(
+        item.buyPrice,
+        rawPayout,
+        won,
+        item.req.contract_type
+    );
+    const { entrySpot, exitSpot } = buildCoherentSpots(
+        item.req.contract_type,
+        won,
+        item.startTime,
+        extractBarrier(item.req),
+        forcedExitDigit,
+        sharedBaseEntry
+    );
+
+    const sim: SimulatedContractState = {
+        contract_id: item.numericContractId,
+        buy_id: item.numericBuyId,
+        sell_id: item.numericBuyId + 1,
+        buy_price: item.buyPrice,
+        payout,
+        sell_price: sellPrice,
+        profit,
+        won,
+        currency: item.currency,
+        contract_type: item.req.contract_type,
+        underlying: item.req.symbol,
+        shortcode: item.buy.shortcode || `${item.req.contract_type}_${item.req.symbol}_${item.numericContractId}`,
+        date_start: item.startTime,
+        entry_spot: entrySpot,
+        exit_spot: exitSpot,
+        settled: false,
+    };
+    simulatedContracts.set(item.numericContractId, sim);
+
+    setTimeout(() => {
+        const currentSim = simulatedContracts.get(item.numericContractId);
+        if (currentSim && !currentSim.settled) {
+            settleSimulatedContract(currentSim);
+        }
+    }, 1400);
+};
+
+const flushBatch = () => {
+    if (batchTimer) {
+        clearTimeout(batchTimer);
+        batchTimer = null;
+    }
+    const items = pendingBatch.splice(0, pendingBatch.length);
+    if (!items.length) return;
+
+    const cfg = items[0].cfg;
+    const src = String(items[0].req.source || '');
+    const sharedBaseEntry = 100 + ((items[0].startTime % 850) + Math.random() * 40);
+
+    if (src === 'matches') {
+        // Matches Pro: count legs (DIGITMATCH), each with its picked digit; at most 1 leg wins on the shared exit digit
+        const pickedDigits = items.map(it => {
+            const b = extractBarrier(it.req);
+            return typeof b === 'number' ? Math.max(0, Math.min(9, Math.floor(b))) : 5;
+        });
+        const favorWin = shouldFavorWin(cfg, Math.min(0.9, items.length * 0.1));
+        let exitDigit: number;
+        if (favorWin) {
+            exitDigit = pickedDigits[Math.floor(Math.random() * pickedDigits.length)];
+        } else {
+            const nonPicked = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(d => !pickedDigits.includes(d));
+            exitDigit = nonPicked.length
+                ? nonPicked[Math.floor(Math.random() * nonPicked.length)]
+                : Math.floor(Math.random() * 10);
+        }
+
+        items.forEach((item, idx) => {
+            const won = pickedDigits[idx] === exitDigit;
+            registerSimulatedState(item, won, exitDigit, sharedBaseEntry);
+        });
+        return;
+    }
+
+    if (src === 'hedge') {
+        // Hedge Hub: Under + Over legs evaluated against one shared exit last digit (0-9)
+        const favorWin = shouldFavorWin(cfg, 0.65);
+        let exitDigit = Math.floor(Math.random() * 10);
+
+        if (cfg.profitabilityEnabled) {
+            const matchingDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(d =>
+                items.some(it => doesContractWinForDigit(it.req.contract_type, d, extractBarrier(it.req)))
+            );
+            const losingBothDigits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(
+                d => !items.some(it => doesContractWinForDigit(it.req.contract_type, d, extractBarrier(it.req)))
+            );
+            if (favorWin && matchingDigits.length) {
+                exitDigit = matchingDigits[Math.floor(Math.random() * matchingDigits.length)];
+            } else if (!favorWin && losingBothDigits.length) {
+                exitDigit = losingBothDigits[Math.floor(Math.random() * losingBothDigits.length)];
+            }
+        }
+
+        items.forEach(item => {
+            const won = doesContractWinForDigit(item.req.contract_type, exitDigit, extractBarrier(item.req));
+            registerSimulatedState(item, won, exitDigit, sharedBaseEntry);
+        });
+        return;
+    }
+
+    if (src === 'bulk') {
+        // Bulk Trader: identical/grouped legs on the same tick share the same outcome and exit digit/spot
+        const firstType = String(items[0].req.contract_type || '').toUpperCase();
+        const firstBarrier = extractBarrier(items[0].req);
+        const allSameTypeAndBarrier = items.every(
+            it =>
+                String(it.req.contract_type || '').toUpperCase() === firstType &&
+                extractBarrier(it.req) === firstBarrier
+        );
+        const batchWon = shouldFavorWin(cfg, 0.485);
+        const sharedDigit = allSameTypeAndBarrier ? pickDigitForContract(firstType, batchWon, firstBarrier) : null;
+
+        items.forEach(item => {
+            const won = allSameTypeAndBarrier ? batchWon : shouldFavorWin(cfg, 0.485);
+            registerSimulatedState(item, won, sharedDigit, sharedBaseEntry);
+        });
+        return;
+    }
+
+    // Single-trade modules (alpha, auto, manual)
+    items.forEach(item => {
+        const won = shouldFavorWin(cfg, 0.485);
+        registerSimulatedState(item, won, null, sharedBaseEntry);
+    });
+};
+
+const enqueueRotBatchItem = (item: BatchItem) => {
+    pendingBatch.push(item);
+    const src = String(item.req.source || '');
+    const isGroupedSource = src === 'hedge' || src === 'matches' || src === 'bulk';
+
+    if (!isGroupedSource) {
+        flushBatch();
+        return;
+    }
+
+    if (!batchTimer) {
+        batchTimer = setTimeout(flushBatch, 90);
+    }
 };
 
 const buildSimulatedContractPayload = (sim: SimulatedContractState, isSold: boolean) => {
@@ -231,7 +479,10 @@ const onContractUpdate = ({ data }: any) => {
     if (data.subscription?.id) send({ forget: data.subscription.id });
     const profit = Number(c.sell_price) - Number(c.buy_price);
     bus.emit('contract.status', { id: 'contract.sold', data: c.transaction_ids?.sell, contract: c });
-    bus.emit('ui.log.success', { log_type: profit > 0 ? LogTypes.PROFIT : LogTypes.LOST, extra: { currency: c.currency, profit: Number(profit.toFixed(2)) } }); // -> Journal
+    bus.emit('ui.log.success', {
+        log_type: profit > 0 ? LogTypes.PROFIT : LogTypes.LOST,
+        extra: { currency: c.currency, profit: Number(profit.toFixed(2)) },
+    }); // -> Journal
     nexus.endTrade();
     done({ contract_id: c.contract_id, profit, won: profit > 0 });
 };
@@ -243,7 +494,9 @@ const onContractUpdate = ({ data }: any) => {
  */
 export const dispatch = (req: TradeReq): Promise<TradeResult> => {
     if (!api_base.api) return Promise.resolve({ error: 'Not connected — log in first.' });
-    if (demoGuard()) return Promise.resolve({ error: 'Demo limit reached. It resets in a few hours, or switch to a real account.' });
+    if (demoGuard()) {
+        return Promise.resolve({ error: 'Demo limit reached. It resets in a few hours, or switch to a real account.' });
+    }
     if (wired_api !== api_base.api) {
         wired_api = api_base.api; // re-wire after account switches / reconnects
         api_base.api.onMessage().subscribe(onContractUpdate);
@@ -268,12 +521,14 @@ export const dispatch = (req: TradeReq): Promise<TradeResult> => {
             return { error: res.error.message as string };
         }
         const buy = res?.buy;
-        if (!buy) { nexus.endTrade(); return { error: 'No purchase confirmation received' }; }
+        if (!buy) {
+            nexus.endTrade();
+            return { error: 'No purchase confirmation received' };
+        }
 
         const numericContractId = Number(buy.contract_id);
         const numericBuyId = Number(buy.transaction_id) || Date.now();
         const buyPrice = Number(buy.buy_price ?? req.stake);
-        const rawPayout = Number(buy.payout ?? buyPrice * 1.92);
         const startTime = Number(buy.start_time) || Math.floor(Date.now() / 1000);
 
         if (rotActive && rotCfg) {
@@ -282,45 +537,23 @@ export const dispatch = (req: TradeReq): Promise<TradeResult> => {
                 syncMarketingClientBalance(afterStakeCfg.balance);
             }
 
-            const won = decideRotOutcome(rotCfg);
-            const reasonablePayout =
-                rawPayout > buyPrice * 1.05 && rawPayout <= buyPrice * 5
-                    ? rawPayout
-                    : buyPrice * 1.92;
-            const profit = won
-                ? Number((reasonablePayout - buyPrice).toFixed(2))
-                : Number((-Math.abs(buyPrice)).toFixed(2));
-            const sellPrice = won ? Number((buyPrice + profit).toFixed(2)) : 0;
-            const { entrySpot, exitSpot } = buildCoherentSpots(
-                req.contract_type,
-                won,
+            enqueueRotBatchItem({
+                req,
+                buy,
+                buyPrice,
+                numericContractId,
+                numericBuyId,
                 startTime,
-                (req as any).prediction ?? (req as any).barrier
-            );
-
-            const sim: SimulatedContractState = {
-                contract_id: numericContractId,
-                buy_id: numericBuyId,
-                sell_id: numericBuyId + 1,
-                buy_price: buyPrice,
-                payout: won ? sellPrice : 0,
-                sell_price: sellPrice,
-                profit,
-                won,
                 currency,
-                contract_type: req.contract_type,
-                underlying: req.symbol,
-                shortcode: buy.shortcode || `${req.contract_type}_${req.symbol}_${numericContractId}`,
-                date_start: startTime,
-                entry_spot: entrySpot,
-                exit_spot: exitSpot,
-                settled: false,
-            };
-            simulatedContracts.set(numericContractId, sim);
+                cfg: rotCfg,
+            });
         }
 
         bus.emit('contract.status', { id: 'contract.purchase_received', data: buy.transaction_id, buy });
-        bus.emit('ui.log.success', { log_type: LogTypes.PURCHASE, extra: { transaction_id: buy.transaction_id, buy_price: buyPrice, currency } });
+        bus.emit('ui.log.success', {
+            log_type: LogTypes.PURCHASE,
+            extra: { transaction_id: buy.transaction_id, buy_price: buyPrice, currency },
+        });
         bus.emit('bot.contract', {
             accountID: nexus.getLoginid(),
             contract_id: buy.contract_id,
@@ -334,18 +567,17 @@ export const dispatch = (req: TradeReq): Promise<TradeResult> => {
             currency,
             is_sold: 0,
         });
-        positions.upsert({ contract_id: buy.contract_id, contract_type: req.contract_type, underlying: req.symbol, buy_price: buyPrice, is_sold: 0 });
+        positions.upsert({
+            contract_id: buy.contract_id,
+            contract_type: req.contract_type,
+            underlying: req.symbol,
+            buy_price: buyPrice,
+            is_sold: 0,
+        });
         return new Promise<TradeResult>(resolve => {
             open.set(numericContractId, resolve);
             if (!rotActive) {
                 send({ proposal_open_contract: 1, contract_id: buy.contract_id, subscribe: 1 });
-            } else {
-                setTimeout(() => {
-                    const currentSim = simulatedContracts.get(numericContractId);
-                    if (currentSim && !currentSim.settled) {
-                        settleSimulatedContract(currentSim);
-                    }
-                }, 1400);
             }
         });
     });
