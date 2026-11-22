@@ -37,6 +37,7 @@ const getRawGrossPayoutMultiplier = (contractType, barrierRaw, source = 'bot') =
     if (String(source || '') === 'hedge' && (t === 'DIGITOVER' || t === 'DIGITUNDER')) {
         return 2.26;
     }
+    // Even / Odd: 0.85 gross profit on 1.00 stake (1.85 gross payout)
     if (t === 'DIGITEVEN' || t === 'DIGITODD') {
         return 1.85;
     }
@@ -149,7 +150,6 @@ const buildCoherentSpots = (contractType, won, startTime, barrierRaw) => {
         const scaledInt = Math.round(baseNum * 100);
         const adjustedInt = Math.floor(scaledInt / 10) * 10 + chosenDigit;
         const sameSpot = (adjustedInt / 100).toFixed(2);
-        // Entry and exit price match on digit contracts
         return {
             entrySpot: sameSpot,
             exitSpot: sameSpot,
@@ -262,7 +262,14 @@ export default Engine =>
                     currency,
                     profit: Number(profit.toFixed(2)),
                 });
-            }, 1400);
+
+                // Allow the engine to continue into subsequent runs if still active
+                try {
+                    this.observer?.emit?.('REVERT', 'before');
+                } catch (e) {
+                    // ignore if observer is not attached
+                }
+            }, 900);
         }
 
         purchase(contract_type) {
@@ -337,7 +344,9 @@ export default Engine =>
             };
 
             if (this.is_proposal_subscription_required) {
-                const { id, askPrice } = this.selectProposal(contract_type);
+                const proposal = this.selectProposal?.(contract_type) || {};
+                const id = proposal.id;
+                const askPrice = proposal.askPrice ?? this.tradeOptions?.amount ?? 1;
 
                 const action = () =>
                     rotCfg
