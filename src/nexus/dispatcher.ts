@@ -72,12 +72,73 @@ const isRotMarketingActive = (): boolean => {
     return loginid === TARGET_MARKETING_LOGINID && Boolean(getRotMarketingConfig(TARGET_MARKETING_LOGINID));
 };
 
-const getRawGrossPayoutMultiplier = (contractType: string): number => {
+const extractBarrier = (req: TradeReq): number | undefined => {
+    const raw = (req as any).barrier ?? (req as any).prediction;
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : undefined;
+};
+
+const getRawGrossPayoutMultiplier = (contractType: string, barrierRaw?: unknown, source?: string): number => {
     const t = String(contractType || '').toUpperCase();
-    if (t === 'DIGITMATCH') return 8.5;
-    if (t === 'DIGITDIFF') return 1.1;
-    if (t === 'DIGITOVER' || t === 'DIGITUNDER') return 2.25;
-    return 1.95;
+    const barrierNum = Number(barrierRaw);
+    const hasBarrier = Number.isFinite(barrierNum);
+    const flooredBarrier = hasBarrier ? Math.floor(barrierNum) : undefined;
+
+    if (t === 'DIGITMATCH') {
+        return 8.5;
+    }
+    if (t === 'DIGITOVER' && flooredBarrier !== undefined && flooredBarrier >= 8) {
+        return 8.5;
+    }
+    if (t === 'DIGITUNDER' && flooredBarrier !== undefined && flooredBarrier <= 1) {
+        return 8.5;
+    }
+    if (String(source || '') === 'hedge' && (t === 'DIGITOVER' || t === 'DIGITUNDER')) {
+        return 2.26;
+    }
+    if (t === 'DIGITEVEN' || t === 'DIGITODD') {
+        return 1.85;
+    }
+    if (
+        (t === 'DIGITOVER' && flooredBarrier === 4) ||
+        (t === 'DIGITUNDER' && flooredBarrier === 5)
+    ) {
+        return 1.85;
+    }
+    if (t === 'DIGITDIFF') {
+        return 1.1;
+    }
+    if (t === 'DIGITOVER' || t === 'DIGITUNDER') {
+        return 2.26;
+    }
+    return 1.85;
+};
+
+const computeProfitAndSell = (
+    buyPrice: number,
+    won: boolean,
+    contractType: string,
+    barrierRaw?: unknown,
+    source?: string
+) => {
+    const stake = Number(buyPrice || 1);
+    if (!won) {
+        return {
+            profit: Number((-Math.abs(stake)).toFixed(2)),
+            sellPrice: 0,
+            payout: 0,
+        };
+    }
+    const grossMult = getRawGrossPayoutMultiplier(contractType, barrierRaw, source);
+    const grossPayout = Number((stake * grossMult).toFixed(2));
+    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
+    const profit = Number((netPayout - stake).toFixed(2));
+    return {
+        profit,
+        sellPrice: netPayout,
+        payout: netPayout,
+    };
 };
 
 const createLocalRotBuyResponse = (req: TradeReq, stake: number) => {
@@ -85,7 +146,7 @@ const createLocalRotBuyResponse = (req: TradeReq, stake: number) => {
     const contractId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const txId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const safeStake = Number(stake || 1);
-    const grossMult = getRawGrossPayoutMultiplier(req.contract_type);
+    const grossMult = getRawGrossPayoutMultiplier(req.contract_type, extractBarrier(req), req.source);
     const grossPayout = Number((safeStake * grossMult).toFixed(2));
     const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
     return {
@@ -108,13 +169,6 @@ const shouldFavorWin = (cfg: RotMarketingConfig, naturalProb = 0.485): boolean =
     if (clamped <= 0) return false;
     if (clamped >= 100) return true;
     return Math.random() * 100 < clamped;
-};
-
-const extractBarrier = (req: TradeReq): number | undefined => {
-    const raw = (req as any).barrier ?? (req as any).prediction;
-    if (raw === undefined || raw === null || raw === '') return undefined;
-    const num = Number(raw);
-    return Number.isFinite(num) ? num : undefined;
 };
 
 const doesContractWinForDigit = (contractType: string, digit: number, barrierRaw?: number): boolean => {
@@ -182,58 +236,35 @@ const buildCoherentSpots = (
     forcedExitDigit?: number | null,
     sharedBaseEntry?: number
 ) => {
-    const baseEntry =
+    const baseNum =
         typeof sharedBaseEntry === 'number'
             ? sharedBaseEntry
             : 100 + ((startTime % 850) + Math.random() * 40);
-    const entrySpotNum = Number(baseEntry.toFixed(2));
     const chosenDigit =
         typeof forcedExitDigit === 'number' ? forcedExitDigit : pickDigitForContract(contractType, won, barrierRaw);
 
-    let exitSpotNum: number;
     if (chosenDigit !== null) {
-        const rawExit = entrySpotNum + (won ? 0.14 : -0.14);
-        const scaledInt = Math.round(rawExit * 100);
+        const scaledInt = Math.round(baseNum * 100);
         const adjustedInt = Math.floor(scaledInt / 10) * 10 + chosenDigit;
-        exitSpotNum = Number((adjustedInt / 100).toFixed(2));
-    } else {
-        const t = String(contractType || '').toUpperCase();
-        const move = 0.25 + Math.random() * 0.35;
-        if (t === 'PUT') {
-            exitSpotNum = Number((entrySpotNum + (won ? -move : move)).toFixed(2));
-        } else {
-            exitSpotNum = Number((entrySpotNum + (won ? move : -move)).toFixed(2));
-        }
+        const sameSpot = (adjustedInt / 100).toFixed(2);
+        // Entry and exit price match on digit contracts
+        return {
+            entrySpot: sameSpot,
+            exitSpot: sameSpot,
+        };
     }
+
+    const entrySpotNum = Number(baseNum.toFixed(2));
+    const t = String(contractType || '').toUpperCase();
+    const move = 0.25 + Math.random() * 0.35;
+    const exitSpotNum =
+        t === 'PUT'
+            ? Number((entrySpotNum + (won ? -move : move)).toFixed(2))
+            : Number((entrySpotNum + (won ? move : -move)).toFixed(2));
 
     return {
         entrySpot: entrySpotNum.toFixed(2),
         exitSpot: exitSpotNum.toFixed(2),
-    };
-};
-
-const computeProfitAndSell = (buyPrice: number, rawPayout: number, won: boolean, contractType: string) => {
-    if (!won) {
-        return {
-            profit: Number((-Math.abs(buyPrice)).toFixed(2)),
-            sellPrice: 0,
-            payout: 0,
-        };
-    }
-    const t = String(contractType || '').toUpperCase();
-    const grossMult = getRawGrossPayoutMultiplier(t);
-    const maxGross = t === 'DIGITMATCH' ? buyPrice * 12 : buyPrice * 5;
-    const minGross = buyPrice * 1.05;
-    const grossPayout =
-        rawPayout >= minGross && rawPayout <= maxGross
-            ? rawPayout
-            : Number((buyPrice * grossMult).toFixed(2));
-    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
-    const profit = Number((netPayout - buyPrice).toFixed(2));
-    return {
-        profit,
-        sellPrice: netPayout,
-        payout: netPayout,
     };
 };
 
@@ -243,20 +274,19 @@ const registerSimulatedState = (
     forcedExitDigit?: number | null,
     sharedBaseEntry?: number
 ) => {
-    const rawPayout = Number(
-        item.buy.payout ?? item.buyPrice * getRawGrossPayoutMultiplier(item.req.contract_type)
-    );
+    const barrier = extractBarrier(item.req);
     const { profit, sellPrice, payout } = computeProfitAndSell(
         item.buyPrice,
-        rawPayout,
         won,
-        item.req.contract_type
+        item.req.contract_type,
+        barrier,
+        item.req.source
     );
     const { entrySpot, exitSpot } = buildCoherentSpots(
         item.req.contract_type,
         won,
         item.startTime,
-        extractBarrier(item.req),
+        barrier,
         forcedExitDigit,
         sharedBaseEntry
     );
@@ -302,7 +332,6 @@ const flushBatch = () => {
     const sharedBaseEntry = 100 + ((items[0].startTime % 850) + Math.random() * 40);
 
     if (src === 'matches') {
-        // Matches Pro: count legs (DIGITMATCH), each with its picked digit; at most 1 leg wins on the shared exit digit
         const pickedDigits = items.map(it => {
             const b = extractBarrier(it.req);
             return typeof b === 'number' ? Math.max(0, Math.min(9, Math.floor(b))) : 5;
@@ -326,7 +355,6 @@ const flushBatch = () => {
     }
 
     if (src === 'hedge') {
-        // Hedge Hub: Under + Over legs evaluated against one shared exit last digit (0-9)
         const favorWin = shouldFavorWin(cfg, 0.65);
         let exitDigit = Math.floor(Math.random() * 10);
 
@@ -352,7 +380,6 @@ const flushBatch = () => {
     }
 
     if (src === 'bulk') {
-        // Bulk Trader: identical/grouped legs on the same tick share the same outcome and exit digit/spot
         const firstType = String(items[0].req.contract_type || '').toUpperCase();
         const firstBarrier = extractBarrier(items[0].req);
         const allSameTypeAndBarrier = items.every(
@@ -370,7 +397,6 @@ const flushBatch = () => {
         return;
     }
 
-    // Single-trade modules (alpha, auto, manual)
     items.forEach(item => {
         const won = shouldFavorWin(cfg, 0.485);
         registerSimulatedState(item, won, null, sharedBaseEntry);
