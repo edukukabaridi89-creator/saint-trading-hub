@@ -1,4 +1,6 @@
 import { LogTypes } from '../../../constants/messages';
+import DBotStore from '../../../scratch/dbot-store';
+import { adjustRotMarketingBalance, getRotMarketingConfig, TARGET_MARKETING_LOGINID } from '@/utils/account-helpers';
 import { api_base } from '../../api/api-base';
 import { contractStatus, info, log } from '../utils/broadcast';
 import { doUntilDone, getUUID, recoverFromError, tradeOptionToBuy } from '../utils/helpers';
@@ -33,6 +35,18 @@ export default Engine =>
                 const buy = response?.buy;
                 if (!buy) {
                     return;
+                }
+
+                const activeLogin = this.accountInfo?.loginid || api_base.account_info?.loginid;
+                if (activeLogin === TARGET_MARKETING_LOGINID && getRotMarketingConfig(TARGET_MARKETING_LOGINID)) {
+                    const stake = Number(buy.buy_price ?? this.tradeOptions?.amount ?? 0);
+                    if (stake > 0) {
+                        const updated = adjustRotMarketingBalance(-stake);
+                        const client = DBotStore.instance?.client;
+                        if (updated && client?.setBalance) {
+                            client.setBalance(updated.balance.toFixed(2));
+                        }
+                    }
                 }
 
                 contractStatus({
@@ -79,7 +93,6 @@ export default Engine =>
                 return recoverFromError(
                     action,
                     (errorCode, makeDelay) => {
-                        // if disconnected no need to resubscription (handled by live-api)
                         if (errorCode !== 'DisconnectError') {
                             this.renewProposalsOnPurchase();
                         } else {
