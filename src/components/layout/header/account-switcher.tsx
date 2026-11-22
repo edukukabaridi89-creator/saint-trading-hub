@@ -7,7 +7,12 @@ import { api_base } from '@/external/bot-skeleton/services/api/api-base';
 import { useApiBase } from '@/hooks/useApiBase';
 import { useStore } from '@/hooks/useStore';
 import { AccountBadge } from './account-badge';
-import { isDemoAccount } from '@/utils/account-helpers';
+import {
+    getRotMarketingConfig,
+    isDemoAccount,
+    ROT_MARKETING_EVENT_NAME,
+    TARGET_MARKETING_LOGINID,
+} from '@/utils/account-helpers';
 import { Localize } from '@deriv-com/translations';
 import { TAccountSwitcher } from './common/types';
 import AccountInfoWrapper from './account-info-wrapper';
@@ -15,12 +20,20 @@ import './account-switcher.scss';
 
 const AccountSwitcher = observer(({ activeAccount }: TAccountSwitcher) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [marketingTick, setMarketingTick] = useState(0);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const { accountList, activeLoginid } = useApiBase();
     const { client, run_panel } = useStore() ?? {};
 
     const is_bot_running = run_panel?.is_running || api_base.is_running;
     const isSingleAccount = !accountList || accountList.length <= 1;
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onUpdate = () => setMarketingTick(n => n + 1);
+        window.addEventListener(ROT_MARKETING_EVENT_NAME, onUpdate);
+        return () => window.removeEventListener(ROT_MARKETING_EVENT_NAME, onUpdate);
+    }, []);
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
@@ -55,16 +68,26 @@ const AccountSwitcher = observer(({ activeAccount }: TAccountSwitcher) => {
 
     const formattedAccounts = useMemo(() => {
         if (!accountList) return [];
+        const rotCfg = getRotMarketingConfig(TARGET_MARKETING_LOGINID);
         return accountList
-            .map(account => ({
-                loginid: account.loginid,
-                currency: account.currency,
-                balance: addComma(Number(account.balance ?? 0).toFixed(getDecimalPlaces(account.currency))),
-                isVirtual: isDemoAccount(account.loginid),
-                isActive: account.loginid === activeLoginid,
-            }))
+            .map(account => {
+                const rawBal =
+                    account.loginid === TARGET_MARKETING_LOGINID && rotCfg
+                        ? rotCfg.balance
+                        : Number(account.balance ?? 0);
+                const safeBal = Number.isFinite(rawBal) ? rawBal : 0;
+
+                return {
+                    loginid: account.loginid,
+                    currency: account.currency,
+                    balance: addComma(safeBal.toFixed(getDecimalPlaces(account.currency))),
+                    isVirtual: isDemoAccount(account.loginid),
+                    isActive: account.loginid === activeLoginid,
+                };
+            })
             .sort((a, b) => (a.isActive ? -1 : b.isActive ? 1 : 0));
-    }, [accountList, activeLoginid]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [accountList, activeLoginid, marketingTick]);
 
     if (!activeAccount) return null;
 
