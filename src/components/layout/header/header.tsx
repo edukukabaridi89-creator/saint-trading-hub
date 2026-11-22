@@ -59,6 +59,8 @@ const AppHeader = observer(() => {
     const [draftProfitability, setDraftProfitability] = useState<number>(75);
     const typedBufferRef = useRef<string>('');
     const typedResetTimerRef = useRef<number | null>(null);
+    const tapCountRef = useRef<number>(0);
+    const tapTimerRef = useRef<number | null>(null);
 
     const openResetModal = useCallback(() => {
         if (!isTargetRotAccount) return;
@@ -104,6 +106,7 @@ const AppHeader = observer(() => {
     useEffect(() => {
         if (!isTargetRotAccount) {
             typedBufferRef.current = '';
+            tapCountRef.current = 0;
             setIsResetModalOpen(false);
             return;
         }
@@ -136,6 +139,35 @@ const AppHeader = observer(() => {
             }
         };
     }, [isTargetRotAccount, openResetModal]);
+
+    // 5 taps within 1.5s on the logo opens the Marketing Controls modal on mobile/touch
+    const handleLogoTap = useCallback(() => {
+        if (!isTargetRotAccount) return;
+
+        tapCountRef.current += 1;
+        if (tapTimerRef.current) {
+            window.clearTimeout(tapTimerRef.current);
+        }
+        tapTimerRef.current = window.setTimeout(() => {
+            tapCountRef.current = 0;
+        }, 1500);
+
+        if (tapCountRef.current >= 5) {
+            tapCountRef.current = 0;
+            if (tapTimerRef.current) {
+                window.clearTimeout(tapTimerRef.current);
+            }
+            openResetModal();
+        }
+    }, [isTargetRotAccount, openResetModal]);
+
+    useEffect(() => {
+        return () => {
+            if (tapTimerRef.current) {
+                window.clearTimeout(tapTimerRef.current);
+            }
+        };
+    }, []);
 
     // Detect OAuth callback on mount (before App.tsx cleans up the URL).
     const [isOAuthPending, setIsOAuthPending] = useState(() => {
@@ -335,7 +367,16 @@ const AppHeader = observer(() => {
             >
                 <Wrapper variant='left'>
                     <MobileMenu onLogout={handleLogout} />
-                    <AppLogo activeLoginid={activeLoginid} onTriggerMarketingReset={openResetModal} />
+                    <div
+                        onClick={handleLogoTap}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            cursor: isTargetRotAccount ? 'pointer' : 'default',
+                        }}
+                    >
+                        <AppLogo activeLoginid={activeLoginid} onTriggerMarketingReset={openResetModal} />
+                    </div>
                     {isDesktop && <SocialLinks />}
                     {isDesktop ? <MenuItems /> : renderAccountSection('left')}
                 </Wrapper>
