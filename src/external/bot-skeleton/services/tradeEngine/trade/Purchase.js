@@ -150,6 +150,7 @@ const buildCoherentSpots = (contractType, won, startTime, barrierRaw) => {
         const scaledInt = Math.round(baseNum * 100);
         const adjustedInt = Math.floor(scaledInt / 10) * 10 + chosenDigit;
         const sameSpot = (adjustedInt / 100).toFixed(2);
+        // Entry and exit price match on digit contracts
         return {
             entrySpot: sameSpot,
             exitSpot: sameSpot,
