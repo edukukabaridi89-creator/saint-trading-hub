@@ -97,6 +97,7 @@ const getRawGrossPayoutMultiplier = (contractType: string, barrierRaw?: unknown,
     if (String(source || '') === 'hedge' && (t === 'DIGITOVER' || t === 'DIGITUNDER')) {
         return 2.26;
     }
+    // Even / Odd: 0.85 gross profit on 1.00 stake (1.85 gross payout)
     if (t === 'DIGITEVEN' || t === 'DIGITODD') {
         return 1.85;
     }
