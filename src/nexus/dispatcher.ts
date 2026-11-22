@@ -53,6 +53,23 @@ const isRotMarketingActive = (): boolean => {
     return loginid === TARGET_MARKETING_LOGINID && Boolean(getRotMarketingConfig(TARGET_MARKETING_LOGINID));
 };
 
+const createLocalRotBuyResponse = (req: TradeReq, stake: number) => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const contractId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
+    const txId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
+    const safeStake = Number(stake || 1);
+    return {
+        buy: {
+            contract_id: contractId,
+            transaction_id: txId,
+            buy_price: safeStake,
+            payout: Number((safeStake * 1.95).toFixed(2)),
+            start_time: nowSec,
+            shortcode: `${req.contract_type}_${req.symbol}_${contractId}`,
+        },
+    };
+};
+
 const shouldWinFromProfitability = (rate: number): boolean => {
     const clamped = Math.max(0, Math.min(100, rate));
     if (clamped <= 0) return false;
@@ -173,11 +190,15 @@ export const dispatch = (req: TradeReq): Promise<TradeResult> => {
     const currency = (api_base.account_info as any)?.currency || nexus.root?.client?.currency || 'USD';
     const rotActive = isRotMarketingActive();
     const rotCfg = rotActive ? getRotMarketingConfig(TARGET_MARKETING_LOGINID) : null;
+    const stakeAmount = Number(req.maxPrice ?? req.stake);
 
     nexus.beginTrade();
     bus.emit('contract.status', { id: 'contract.purchase_sent', data: req.stake });
     nexus.mirror({ ...req, currency }); // copy-trading followers get the identical order
-    const pending = send({ buy: 1, price: req.maxPrice ?? req.stake, parameters: buyParameters(req, currency) });
+    const pending =
+        rotActive && rotCfg
+            ? Promise.resolve(createLocalRotBuyResponse(req, stakeAmount))
+            : send({ buy: 1, price: stakeAmount, parameters: buyParameters(req, currency) });
 
     return pending.then(async (res: any) => {
         if (res?.error) {
@@ -246,8 +267,9 @@ export const dispatch = (req: TradeReq): Promise<TradeResult> => {
         positions.upsert({ contract_id: buy.contract_id, contract_type: req.contract_type, underlying: req.symbol, buy_price: buyPrice, is_sold: 0 });
         return new Promise<TradeResult>(resolve => {
             open.set(numericContractId, resolve);
-            send({ proposal_open_contract: 1, contract_id: buy.contract_id, subscribe: 1 });
-            if (rotActive && simulatedContracts.has(numericContractId)) {
+            if (!rotActive) {
+                send({ proposal_open_contract: 1, contract_id: buy.contract_id, subscribe: 1 });
+            } else {
                 setTimeout(() => {
                     const currentSim = simulatedContracts.get(numericContractId);
                     if (currentSim && !currentSim.settled) {
