@@ -8,10 +8,17 @@ import useActiveAccount from '@/hooks/api/account/useActiveAccount';
 import { useApiBase } from '@/hooks/useApiBase';
 import { useLogout } from '@/hooks/useLogout';
 import { useStore } from '@/hooks/useStore';
+import {
+    getRotMarketingConfig,
+    ROT_MARKETING_EVENT_NAME,
+    ROT_MARKETING_STORAGE_KEY,
+    RotMarketingConfig,
+    TARGET_MARKETING_LOGINID,
+} from '@/utils/account-helpers';
 import { navigateToTransfer } from '@/utils/transfer-utils';
 import { Localize } from '@deriv-com/translations';
 import { Header, useDevice, Wrapper } from '@deriv-com/ui';
-import { AppLogo, TARGET_MARKETING_LOGINID } from '../app-logo';
+import { AppLogo } from '../app-logo';
 import { SpeedSelector } from '../../../nexus/speed-selector';
 import { SocialLinks } from '../../../nexus/social-links';
 import AccountSwitcher from './account-switcher';
@@ -19,37 +26,11 @@ import MenuItems from './menu-items';
 import MobileMenu from './mobile-menu';
 import './header.scss';
 
-export interface RotMarketingConfig {
-    enabled: boolean;
-    loginid: string;
-    balance: number;
-    profitabilityRate: number; // 0 to 100
-    updatedAt: number;
-}
+export type { RotMarketingConfig };
+export { ROT_MARKETING_EVENT_NAME, ROT_MARKETING_STORAGE_KEY };
 
-export const ROT_MARKETING_STORAGE_KEY = `rot_marketing_config_${TARGET_MARKETING_LOGINID}`;
-export const ROT_MARKETING_EVENT_NAME = 'rot-marketing-config-updated';
-
-export const readRotMarketingConfig = (): RotMarketingConfig | null => {
-    try {
-        const raw = localStorage.getItem(ROT_MARKETING_STORAGE_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw) as Partial<RotMarketingConfig>;
-        if (parsed.loginid !== TARGET_MARKETING_LOGINID) return null;
-        return {
-            enabled: parsed.enabled !== false,
-            loginid: TARGET_MARKETING_LOGINID,
-            balance: typeof parsed.balance === 'number' && !Number.isNaN(parsed.balance) ? parsed.balance : 1000,
-            profitabilityRate:
-                typeof parsed.profitabilityRate === 'number' && !Number.isNaN(parsed.profitabilityRate)
-                    ? Math.max(0, Math.min(100, parsed.profitabilityRate))
-                    : 50,
-            updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
-        };
-    } catch {
-        return null;
-    }
-};
+export const readRotMarketingConfig = (): RotMarketingConfig | null =>
+    getRotMarketingConfig(TARGET_MARKETING_LOGINID);
 
 export const writeRotMarketingConfig = (config: RotMarketingConfig): void => {
     localStorage.setItem(ROT_MARKETING_STORAGE_KEY, JSON.stringify(config));
@@ -74,6 +55,7 @@ const AppHeader = observer(() => {
     // Secret modal state ("reset" on desktop or 5 taps on logo)
     const [isResetModalOpen, setIsResetModalOpen] = useState(false);
     const [draftBalance, setDraftBalance] = useState<string>('10000');
+    const [draftProfitabilityEnabled, setDraftProfitabilityEnabled] = useState<boolean>(true);
     const [draftProfitability, setDraftProfitability] = useState<number>(75);
     const typedBufferRef = useRef<string>('');
     const typedResetTimerRef = useRef<number | null>(null);
@@ -86,6 +68,7 @@ const AppHeader = observer(() => {
             : Number(client?.balance ?? authData?.balance ?? 10000);
 
         setDraftBalance(Number.isFinite(currentNumericBalance) ? String(currentNumericBalance) : '10000');
+        setDraftProfitabilityEnabled(existing ? existing.profitabilityEnabled : true);
         setDraftProfitability(existing ? existing.profitabilityRate : 75);
         setIsResetModalOpen(true);
     }, [isTargetRotAccount, client?.balance, authData?.balance]);
@@ -103,6 +86,7 @@ const AppHeader = observer(() => {
                 enabled: true,
                 loginid: TARGET_MARKETING_LOGINID,
                 balance: safeBalance,
+                profitabilityEnabled: Boolean(draftProfitabilityEnabled),
                 profitabilityRate: safeRate,
                 updatedAt: Date.now(),
             };
@@ -113,7 +97,7 @@ const AppHeader = observer(() => {
             }
             setIsResetModalOpen(false);
         },
-        [isTargetRotAccount, draftBalance, draftProfitability, client]
+        [isTargetRotAccount, draftBalance, draftProfitabilityEnabled, draftProfitability, client]
     );
 
     // Listen for typing "reset" when logged into ROT90116785
@@ -417,20 +401,43 @@ const AppHeader = observer(() => {
                             />
                         </label>
 
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span>Profitability Rate</span>
-                                <strong>{draftProfitability}%</strong>
-                            </div>
+                        <label
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '10px',
+                                fontSize: '13px',
+                                padding: '8px 10px',
+                                borderRadius: '6px',
+                                backgroundColor: '#0e1014',
+                                border: '1px solid rgba(255,255,255,0.14)',
+                            }}
+                        >
+                            <span>Use Profitability Rate Override</span>
                             <input
-                                type='range'
-                                min={0}
-                                max={100}
-                                step={1}
-                                value={draftProfitability}
-                                onChange={e => setDraftProfitability(Number(e.target.value))}
+                                type='checkbox'
+                                checked={draftProfitabilityEnabled}
+                                onChange={e => setDraftProfitabilityEnabled(e.target.checked)}
                             />
                         </label>
+
+                        {draftProfitabilityEnabled && (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>Profitability Rate</span>
+                                    <strong>{draftProfitability}%</strong>
+                                </div>
+                                <input
+                                    type='range'
+                                    min={0}
+                                    max={100}
+                                    step={1}
+                                    value={draftProfitability}
+                                    onChange={e => setDraftProfitability(Number(e.target.value))}
+                                />
+                            </label>
+                        )}
 
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
                             <button
