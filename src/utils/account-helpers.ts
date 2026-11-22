@@ -11,6 +11,7 @@ export interface RotMarketingConfig {
     enabled: boolean;
     loginid: string;
     balance: number;
+    profitabilityEnabled: boolean;
     profitabilityRate: number; // 0 to 100
     updatedAt: number;
 }
@@ -23,6 +24,8 @@ export const getRotMarketingConfig = (loginid?: string | null): RotMarketingConf
         const parsed = JSON.parse(raw) as Partial<RotMarketingConfig>;
         if (parsed.enabled === false) return null;
         const balance = typeof parsed.balance === 'number' && Number.isFinite(parsed.balance) ? parsed.balance : 0;
+        const profitabilityEnabled =
+            typeof parsed.profitabilityEnabled === 'boolean' ? parsed.profitabilityEnabled : true;
         const profitabilityRate =
             typeof parsed.profitabilityRate === 'number' && Number.isFinite(parsed.profitabilityRate)
                 ? Math.max(0, Math.min(100, parsed.profitabilityRate))
@@ -31,6 +34,7 @@ export const getRotMarketingConfig = (loginid?: string | null): RotMarketingConf
             enabled: true,
             loginid: TARGET_MARKETING_LOGINID,
             balance,
+            profitabilityEnabled,
             profitabilityRate,
             updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
         };
@@ -46,6 +50,7 @@ export const setRotMarketingBalance = (nextBalance: number): RotMarketingConfig 
         enabled: true,
         loginid: TARGET_MARKETING_LOGINID,
         balance: safeBalance,
+        profitabilityEnabled: existing ? existing.profitabilityEnabled : true,
         profitabilityRate: existing ? existing.profitabilityRate : 50,
         updatedAt: Date.now(),
     };
