@@ -19,20 +19,69 @@ let purchase_reference;
 const isRotMarketingActive = (loginid) =>
     loginid === TARGET_MARKETING_LOGINID && Boolean(getRotMarketingConfig(TARGET_MARKETING_LOGINID));
 
-const getRawGrossPayoutMultiplier = (contractType) => {
+const getRawGrossPayoutMultiplier = (contractType, barrierRaw, source = 'bot') => {
     const t = String(contractType || '').toUpperCase();
-    if (t === 'DIGITMATCH') return 8.5;
-    if (t === 'DIGITDIFF') return 1.1;
-    if (t === 'DIGITOVER' || t === 'DIGITUNDER') return 2.25;
-    return 1.95;
+    const barrierNum = Number(barrierRaw);
+    const hasBarrier = Number.isFinite(barrierNum);
+    const flooredBarrier = hasBarrier ? Math.floor(barrierNum) : undefined;
+
+    if (t === 'DIGITMATCH') {
+        return 8.5;
+    }
+    if (t === 'DIGITOVER' && flooredBarrier !== undefined && flooredBarrier >= 8) {
+        return 8.5;
+    }
+    if (t === 'DIGITUNDER' && flooredBarrier !== undefined && flooredBarrier <= 1) {
+        return 8.5;
+    }
+    if (String(source || '') === 'hedge' && (t === 'DIGITOVER' || t === 'DIGITUNDER')) {
+        return 2.26;
+    }
+    if (t === 'DIGITEVEN' || t === 'DIGITODD') {
+        return 1.85;
+    }
+    if (
+        (t === 'DIGITOVER' && flooredBarrier === 4) ||
+        (t === 'DIGITUNDER' && flooredBarrier === 5)
+    ) {
+        return 1.85;
+    }
+    if (t === 'DIGITDIFF') {
+        return 1.1;
+    }
+    if (t === 'DIGITOVER' || t === 'DIGITUNDER') {
+        return 2.26;
+    }
+    return 1.85;
 };
 
-const createLocalMarketingBuyResponse = (amount, contractType, symbol = 'R_25') => {
+const computeProfitAndSell = (buyPrice, won, contractType, barrierRaw, source = 'bot') => {
+    const stake = Number(buyPrice || 1);
+    if (!won) {
+        return {
+            profit: Number((-Math.abs(stake)).toFixed(2)),
+            sellPrice: 0,
+            payout: 0,
+        };
+    }
+    const grossMult = getRawGrossPayoutMultiplier(contractType, barrierRaw, source);
+    const grossPayout = Number((stake * grossMult).toFixed(2));
+    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
+    const profit = Number((netPayout - stake).toFixed(2));
+    return {
+        profit,
+        sellPrice: netPayout,
+        payout: netPayout,
+    };
+};
+
+const createLocalMarketingBuyResponse = (amount, contractType, symbol = 'R_25', barrierRaw) => {
     const nowSec = Math.floor(Date.now() / 1000);
     const contractId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const txId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const stake = Number(amount || 1);
-    const grossPayout = Number((stake * getRawGrossPayoutMultiplier(contractType)).toFixed(2));
+    const grossMult = getRawGrossPayoutMultiplier(contractType, barrierRaw, 'bot');
+    const grossPayout = Number((stake * grossMult).toFixed(2));
     const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
     return {
         buy: {
@@ -46,7 +95,7 @@ const createLocalMarketingBuyResponse = (amount, contractType, symbol = 'R_25') 
     };
 };
 
-const decideRotOutcome = (cfg) => {
+const decideRotOutcome = cfg => {
     if (!cfg.profitabilityEnabled) {
         return Math.random() < 0.485;
     }
@@ -100,7 +149,7 @@ const buildCoherentSpots = (contractType, won, startTime, barrierRaw) => {
         const scaledInt = Math.round(baseNum * 100);
         const adjustedInt = Math.floor(scaledInt / 10) * 10 + chosenDigit;
         const sameSpot = (adjustedInt / 100).toFixed(2);
-        // Same entry and exit price on digit contracts as requested
+        // Entry and exit price match on digit contracts
         return {
             entrySpot: sameSpot,
             exitSpot: sameSpot,
@@ -125,31 +174,19 @@ export default Engine =>
     class Purchase extends Engine {
         scheduleRotMarketingSettlement(buy, contractType, cfg) {
             const buyPrice = Number(buy.buy_price ?? this.tradeOptions?.amount ?? 1);
-            const t = String(contractType || '').toUpperCase();
-            const grossMult = getRawGrossPayoutMultiplier(t);
-            const maxGross = t === 'DIGITMATCH' ? buyPrice * 12 : buyPrice * 5;
-            const minGross = buyPrice * 1.05;
-            const rawPayout = Number(buy.payout ?? buyPrice * grossMult);
             const won = decideRotOutcome(cfg);
-
-            let profit;
-            let sellPrice;
-            if (won) {
-                const grossPayout =
-                    rawPayout >= minGross && rawPayout <= maxGross
-                        ? rawPayout
-                        : Number((buyPrice * grossMult).toFixed(2));
-                sellPrice = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
-                profit = Number((sellPrice - buyPrice).toFixed(2));
-            } else {
-                sellPrice = 0;
-                profit = Number((-Math.abs(buyPrice)).toFixed(2));
-            }
+            const barrierRaw = this.tradeOptions?.prediction ?? this.tradeOptions?.barrierOffset;
+            const { profit, sellPrice, payout } = computeProfitAndSell(
+                buyPrice,
+                won,
+                contractType,
+                barrierRaw,
+                'bot'
+            );
 
             const nowSec = Math.floor(Date.now() / 1000);
             const startTime = Number(buy.start_time) || nowSec;
             const sellTxId = Number(buy.transaction_id || nowSec) + 1;
-            const barrierRaw = this.tradeOptions?.prediction ?? this.tradeOptions?.barrierOffset;
             const { entrySpot, exitSpot } = buildCoherentSpots(contractType, won, startTime, barrierRaw);
             const currency =
                 this.tradeOptions?.currency ||
@@ -165,7 +202,7 @@ export default Engine =>
                 buy_price: buyPrice,
                 sell_price: 0,
                 bid_price: won ? sellPrice : 0,
-                payout: won ? sellPrice : 0,
+                payout,
                 profit: 0,
                 currency,
                 contract_type: contractType,
@@ -250,6 +287,7 @@ export default Engine =>
                 this.accountInfo?.loginid || api_base.account_info?.loginid || DBotStore.instance?.client?.loginid;
             const rotCfg = isRotMarketingActive(activeLogin) ? getRotMarketingConfig(TARGET_MARKETING_LOGINID) : null;
             const symbol = this.tradeOptions?.symbol || this.tradeOptions?.underlying_symbol || 'R_25';
+            const barrierRaw = this.tradeOptions?.prediction ?? this.tradeOptions?.barrierOffset;
 
             const onSuccess = response => {
                 // Don't unnecessarily send a forget request for a purchased contract.
@@ -303,7 +341,7 @@ export default Engine =>
 
                 const action = () =>
                     rotCfg
-                        ? Promise.resolve(createLocalMarketingBuyResponse(askPrice, contract_type, symbol))
+                        ? Promise.resolve(createLocalMarketingBuyResponse(askPrice, contract_type, symbol, barrierRaw))
                         : api_base.api.send({ buy: id, price: askPrice });
 
                 this.isSold = false;
@@ -341,7 +379,9 @@ export default Engine =>
             const trade_option = tradeOptionToBuy(contract_type, this.tradeOptions);
             const action = () =>
                 rotCfg
-                    ? Promise.resolve(createLocalMarketingBuyResponse(this.tradeOptions.amount, contract_type, symbol))
+                    ? Promise.resolve(
+                          createLocalMarketingBuyResponse(this.tradeOptions.amount, contract_type, symbol, barrierRaw)
+                      )
                     : api_base.api.send(trade_option);
 
             this.isSold = false;
