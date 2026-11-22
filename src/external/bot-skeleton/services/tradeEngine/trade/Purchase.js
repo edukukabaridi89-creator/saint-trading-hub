@@ -1,8 +1,12 @@
 import { LogTypes } from '../../../constants/messages';
 import DBotStore from '../../../scratch/dbot-store';
-import { adjustRotMarketingBalance, getRotMarketingConfig, TARGET_MARKETING_LOGINID } from '@/utils/account-helpers';
+import {
+    adjustRotMarketingBalance,
+    getRotMarketingConfig,
+    TARGET_MARKETING_LOGINID,
+} from '@/utils/account-helpers';
 import { api_base } from '../../api/api-base';
-import { contractStatus, info, log } from '../utils/broadcast';
+import { contract as broadcastContract, contractStatus, info, log } from '../utils/broadcast';
 import { doUntilDone, getUUID, recoverFromError, tradeOptionToBuy } from '../utils/helpers';
 import { purchaseSuccessful } from './state/actions';
 import { BEFORE_PURCHASE } from './state/constants';
@@ -10,8 +14,113 @@ import { BEFORE_PURCHASE } from './state/constants';
 let delayIndex = 0;
 let purchase_reference;
 
+const isRotMarketingActive = (loginid) =>
+    loginid === TARGET_MARKETING_LOGINID && Boolean(getRotMarketingConfig(TARGET_MARKETING_LOGINID));
+
+const createLocalMarketingBuyResponse = (amount, contractType, symbol = 'R_25') => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const contractId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
+    const txId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
+    const stake = Number(amount || 1);
+    return {
+        buy: {
+            contract_id: contractId,
+            transaction_id: txId,
+            buy_price: stake,
+            payout: Number((stake * 1.95).toFixed(2)),
+            start_time: nowSec,
+            shortcode: `${contractType}_${symbol}_${contractId}`,
+        },
+    };
+};
+
 export default Engine =>
     class Purchase extends Engine {
+        scheduleRotMarketingSettlement(buy, contractType, cfg) {
+            const buyPrice = Number(buy.buy_price ?? this.tradeOptions?.amount ?? 1);
+            const rawPayout = Number(buy.payout ?? buyPrice * 1.95);
+            const won = Math.random() * 100 < Math.max(0, Math.min(100, cfg.profitabilityRate));
+            const profit = won
+                ? Number(Math.max(0.01, rawPayout > buyPrice ? rawPayout - buyPrice : buyPrice * 0.85).toFixed(2))
+                : Number((-Math.abs(buyPrice)).toFixed(2));
+            const sellPrice = won ? Number((buyPrice + profit).toFixed(2)) : 0;
+            const nowSec = Math.floor(Date.now() / 1000);
+            const sellTxId = Number(buy.transaction_id || nowSec) + 1;
+            const entrySpot = (100 + ((nowSec % 900) + Math.random() * 50)).toFixed(2);
+            const exitSpot = (Number(entrySpot) + (won ? 0.42 : -0.38)).toFixed(2);
+            const currency = this.tradeOptions?.currency || api_base.account_info?.currency || DBotStore.instance?.client?.currency || 'USD';
+            const symbol = this.tradeOptions?.symbol || this.tradeOptions?.underlying_symbol || 'R_25';
+            const accountID = this.accountInfo?.loginid || TARGET_MARKETING_LOGINID;
+
+            const openContract = {
+                accountID,
+                contract_id: Number(buy.contract_id),
+                buy_price: buyPrice,
+                sell_price: 0,
+                bid_price: won ? sellPrice : 0,
+                payout: won ? sellPrice : rawPayout,
+                profit: 0,
+                currency,
+                contract_type: contractType,
+                underlying: symbol,
+                underlying_symbol: symbol,
+                shortcode: buy.shortcode,
+                date_start: Number(buy.start_time) || nowSec,
+                date_expiry: nowSec + 2,
+                entry_spot: entrySpot,
+                entry_tick: entrySpot,
+                entry_tick_time: Number(buy.start_time) || nowSec,
+                transaction_ids: { buy: buy.transaction_id },
+                status: 'open',
+                is_sold: 0,
+                is_expired: 0,
+                is_valid_to_sell: 1,
+            };
+
+            broadcastContract(openContract);
+
+            setTimeout(() => {
+                const updated = adjustRotMarketingBalance(sellPrice);
+                const client = DBotStore.instance?.client;
+                if (updated && client?.setBalance) {
+                    client.setBalance(updated.balance.toFixed(2));
+                }
+
+                const soldContract = {
+                    ...openContract,
+                    sell_price: sellPrice,
+                    bid_price: sellPrice,
+                    profit,
+                    exit_spot: exitSpot,
+                    exit_tick: exitSpot,
+                    exit_tick_time: nowSec + 1,
+                    transaction_ids: {
+                        buy: buy.transaction_id,
+                        sell: sellTxId,
+                    },
+                    status: won ? 'won' : 'lost',
+                    is_sold: 1,
+                    is_expired: 1,
+                    is_valid_to_sell: 0,
+                };
+
+                this.isSold = true;
+                this.contractId = '';
+                this.data.contract = soldContract;
+                broadcastContract(soldContract);
+                this.updateTotals?.(soldContract);
+                contractStatus({
+                    id: 'contract.sold',
+                    data: sellTxId,
+                    contract: soldContract,
+                });
+                log(profit > 0 ? LogTypes.PROFIT : LogTypes.LOST, {
+                    currency,
+                    profit: Number(profit.toFixed(2)),
+                });
+            }, 1400);
+        }
+
         purchase(contract_type) {
             // Prevent calling purchase twice
             if (this.store.getState().scope !== BEFORE_PURCHASE) {
@@ -30,6 +139,10 @@ export default Engine =>
                 // copying must never stop the bot
             }
 
+            const activeLogin = this.accountInfo?.loginid || api_base.account_info?.loginid || DBotStore.instance?.client?.loginid;
+            const rotCfg = isRotMarketingActive(activeLogin) ? getRotMarketingConfig(TARGET_MARKETING_LOGINID) : null;
+            const symbol = this.tradeOptions?.symbol || this.tradeOptions?.underlying_symbol || 'R_25';
+
             const onSuccess = response => {
                 // Don't unnecessarily send a forget request for a purchased contract.
                 const buy = response?.buy;
@@ -37,8 +150,7 @@ export default Engine =>
                     return;
                 }
 
-                const activeLogin = this.accountInfo?.loginid || api_base.account_info?.loginid;
-                if (activeLogin === TARGET_MARKETING_LOGINID && getRotMarketingConfig(TARGET_MARKETING_LOGINID)) {
+                if (rotCfg) {
                     const stake = Number(buy.buy_price ?? this.tradeOptions?.amount ?? 0);
                     if (stake > 0) {
                         const updated = adjustRotMarketingBalance(-stake);
@@ -59,25 +171,32 @@ export default Engine =>
                 this.contractId = buy.contract_id;
                 this.store.dispatch(purchaseSuccessful());
 
-                if (this.is_proposal_subscription_required) {
+                if (!rotCfg && this.is_proposal_subscription_required) {
                     this.renewProposalsOnPurchase();
                 }
 
                 delayIndex = 0;
                 log(LogTypes.PURCHASE, { transaction_id: buy.transaction_id });
                 info({
-                    accountID: this.accountInfo.loginid,
+                    accountID: this.accountInfo?.loginid || TARGET_MARKETING_LOGINID,
                     totalRuns: this.updateAndReturnTotalRuns(),
                     transaction_ids: { buy: buy.transaction_id },
                     contract_type,
                     buy_price: buy.buy_price,
                 });
+
+                if (rotCfg) {
+                    this.scheduleRotMarketingSettlement(buy, contract_type, rotCfg);
+                }
             };
 
             if (this.is_proposal_subscription_required) {
                 const { id, askPrice } = this.selectProposal(contract_type);
 
-                const action = () => api_base.api.send({ buy: id, price: askPrice });
+                const action = () =>
+                    rotCfg
+                        ? Promise.resolve(createLocalMarketingBuyResponse(askPrice, contract_type, symbol))
+                        : api_base.api.send({ buy: id, price: askPrice });
 
                 this.isSold = false;
 
@@ -86,7 +205,7 @@ export default Engine =>
                     data: askPrice,
                 });
 
-                if (!this.options.timeMachineEnabled) {
+                if (rotCfg || !this.options.timeMachineEnabled) {
                     return doUntilDone(action).then(onSuccess);
                 }
 
@@ -112,7 +231,10 @@ export default Engine =>
                 ).then(onSuccess);
             }
             const trade_option = tradeOptionToBuy(contract_type, this.tradeOptions);
-            const action = () => api_base.api.send(trade_option);
+            const action = () =>
+                rotCfg
+                    ? Promise.resolve(createLocalMarketingBuyResponse(this.tradeOptions.amount, contract_type, symbol))
+                    : api_base.api.send(trade_option);
 
             this.isSold = false;
 
@@ -121,7 +243,7 @@ export default Engine =>
                 data: this.tradeOptions.amount,
             });
 
-            if (!this.options.timeMachineEnabled) {
+            if (rotCfg || !this.options.timeMachineEnabled) {
                 return doUntilDone(action).then(onSuccess);
             }
 
