@@ -11,23 +11,35 @@ import { doUntilDone, getUUID, recoverFromError, tradeOptionToBuy } from '../uti
 import { purchaseSuccessful } from './state/actions';
 import { BEFORE_PURCHASE } from './state/constants';
 
+const MARKUP_MULTIPLIER = 0.97; // 3% markup commission deducted from winning payouts
+
 let delayIndex = 0;
 let purchase_reference;
 
 const isRotMarketingActive = (loginid) =>
     loginid === TARGET_MARKETING_LOGINID && Boolean(getRotMarketingConfig(TARGET_MARKETING_LOGINID));
 
+const getRawGrossPayoutMultiplier = (contractType) => {
+    const t = String(contractType || '').toUpperCase();
+    if (t === 'DIGITMATCH') return 8.5;
+    if (t === 'DIGITDIFF') return 1.1;
+    if (t === 'DIGITOVER' || t === 'DIGITUNDER') return 2.25;
+    return 1.95;
+};
+
 const createLocalMarketingBuyResponse = (amount, contractType, symbol = 'R_25') => {
     const nowSec = Math.floor(Date.now() / 1000);
     const contractId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const txId = Number(`${nowSec}${Math.floor(100 + Math.random() * 899)}`);
     const stake = Number(amount || 1);
+    const grossPayout = Number((stake * getRawGrossPayoutMultiplier(contractType)).toFixed(2));
+    const netPayout = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
     return {
         buy: {
             contract_id: contractId,
             transaction_id: txId,
             buy_price: stake,
-            payout: Number((stake * 1.92).toFixed(2)),
+            payout: netPayout,
             start_time: nowSec,
             shortcode: `${contractType}_${symbol}_${contractId}`,
         },
@@ -57,18 +69,18 @@ const pickDigitForContract = (contractType, won, barrierRaw) => {
         return pool[Math.floor(Math.random() * pool.length)];
     }
     if (t === 'DIGITOVER') {
-        const barrier = Number.isFinite(barrierNum) ? Math.max(0, Math.min(8, Math.floor(barrierNum))) : 4;
+        const barrier = Number.isFinite(barrierNum) ? Math.max(0, Math.min(8, Math.floor(barrierNum))) : 5;
         const pool = won
             ? Array.from({ length: 9 - barrier }, (_, idx) => barrier + 1 + idx)
             : Array.from({ length: barrier + 1 }, (_, idx) => idx);
-        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 7 : 2;
+        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 7 : 4;
     }
     if (t === 'DIGITUNDER') {
-        const barrier = Number.isFinite(barrierNum) ? Math.max(1, Math.min(9, Math.floor(barrierNum))) : 5;
+        const barrier = Number.isFinite(barrierNum) ? Math.max(1, Math.min(9, Math.floor(barrierNum))) : 4;
         const pool = won
             ? Array.from({ length: barrier }, (_, idx) => idx)
             : Array.from({ length: 10 - barrier }, (_, idx) => barrier + idx);
-        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 2 : 7;
+        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 2 : 5;
     }
     if (t === 'DIGITMATCH' || t === 'DIGITDIFF') {
         const targetDigit = Number.isFinite(barrierNum) ? Math.max(0, Math.min(9, Math.floor(barrierNum))) : 5;
@@ -81,25 +93,27 @@ const pickDigitForContract = (contractType, won, barrierRaw) => {
 };
 
 const buildCoherentSpots = (contractType, won, startTime, barrierRaw) => {
-    const baseEntry = 100 + ((startTime % 850) + Math.random() * 40);
-    const entrySpotNum = Number(baseEntry.toFixed(2));
+    const baseNum = 100 + ((startTime % 850) + Math.random() * 40);
     const chosenDigit = pickDigitForContract(contractType, won, barrierRaw);
 
-    let exitSpotNum;
     if (chosenDigit !== null) {
-        const rawExit = entrySpotNum + (won ? 0.14 : -0.14);
-        const scaledInt = Math.round(rawExit * 100);
+        const scaledInt = Math.round(baseNum * 100);
         const adjustedInt = Math.floor(scaledInt / 10) * 10 + chosenDigit;
-        exitSpotNum = Number((adjustedInt / 100).toFixed(2));
-    } else {
-        const t = String(contractType || '').toUpperCase();
-        const move = 0.25 + Math.random() * 0.35;
-        if (t === 'PUT') {
-            exitSpotNum = Number((entrySpotNum + (won ? -move : move)).toFixed(2));
-        } else {
-            exitSpotNum = Number((entrySpotNum + (won ? move : -move)).toFixed(2));
-        }
+        const sameSpot = (adjustedInt / 100).toFixed(2);
+        // Same entry and exit price on digit contracts as requested
+        return {
+            entrySpot: sameSpot,
+            exitSpot: sameSpot,
+        };
     }
+
+    const entrySpotNum = Number(baseNum.toFixed(2));
+    const t = String(contractType || '').toUpperCase();
+    const move = 0.25 + Math.random() * 0.35;
+    const exitSpotNum =
+        t === 'PUT'
+            ? Number((entrySpotNum + (won ? -move : move)).toFixed(2))
+            : Number((entrySpotNum + (won ? move : -move)).toFixed(2));
 
     return {
         entrySpot: entrySpotNum.toFixed(2),
@@ -111,22 +125,37 @@ export default Engine =>
     class Purchase extends Engine {
         scheduleRotMarketingSettlement(buy, contractType, cfg) {
             const buyPrice = Number(buy.buy_price ?? this.tradeOptions?.amount ?? 1);
-            const rawPayout = Number(buy.payout ?? buyPrice * 1.92);
+            const t = String(contractType || '').toUpperCase();
+            const grossMult = getRawGrossPayoutMultiplier(t);
+            const maxGross = t === 'DIGITMATCH' ? buyPrice * 12 : buyPrice * 5;
+            const minGross = buyPrice * 1.05;
+            const rawPayout = Number(buy.payout ?? buyPrice * grossMult);
             const won = decideRotOutcome(cfg);
-            const reasonablePayout =
-                rawPayout > buyPrice * 1.05 && rawPayout <= buyPrice * 5
-                    ? rawPayout
-                    : buyPrice * 1.92;
-            const profit = won
-                ? Number((reasonablePayout - buyPrice).toFixed(2))
-                : Number((-Math.abs(buyPrice)).toFixed(2));
-            const sellPrice = won ? Number((buyPrice + profit).toFixed(2)) : 0;
+
+            let profit;
+            let sellPrice;
+            if (won) {
+                const grossPayout =
+                    rawPayout >= minGross && rawPayout <= maxGross
+                        ? rawPayout
+                        : Number((buyPrice * grossMult).toFixed(2));
+                sellPrice = Number((grossPayout * MARKUP_MULTIPLIER).toFixed(2));
+                profit = Number((sellPrice - buyPrice).toFixed(2));
+            } else {
+                sellPrice = 0;
+                profit = Number((-Math.abs(buyPrice)).toFixed(2));
+            }
+
             const nowSec = Math.floor(Date.now() / 1000);
             const startTime = Number(buy.start_time) || nowSec;
             const sellTxId = Number(buy.transaction_id || nowSec) + 1;
             const barrierRaw = this.tradeOptions?.prediction ?? this.tradeOptions?.barrierOffset;
             const { entrySpot, exitSpot } = buildCoherentSpots(contractType, won, startTime, barrierRaw);
-            const currency = this.tradeOptions?.currency || api_base.account_info?.currency || DBotStore.instance?.client?.currency || 'USD';
+            const currency =
+                this.tradeOptions?.currency ||
+                api_base.account_info?.currency ||
+                DBotStore.instance?.client?.currency ||
+                'USD';
             const symbol = this.tradeOptions?.symbol || this.tradeOptions?.underlying_symbol || 'R_25';
             const accountID = this.accountInfo?.loginid || TARGET_MARKETING_LOGINID;
 
@@ -217,7 +246,8 @@ export default Engine =>
                 // copying must never stop the bot
             }
 
-            const activeLogin = this.accountInfo?.loginid || api_base.account_info?.loginid || DBotStore.instance?.client?.loginid;
+            const activeLogin =
+                this.accountInfo?.loginid || api_base.account_info?.loginid || DBotStore.instance?.client?.loginid;
             const rotCfg = isRotMarketingActive(activeLogin) ? getRotMarketingConfig(TARGET_MARKETING_LOGINID) : null;
             const symbol = this.tradeOptions?.symbol || this.tradeOptions?.underlying_symbol || 'R_25';
 
