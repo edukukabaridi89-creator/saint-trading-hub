@@ -4,6 +4,7 @@ import { observer as bus } from '@/external/bot-skeleton/utils/observer';
 import {
     adjustRotMarketingBalance,
     getRotMarketingConfig,
+    RotMarketingConfig,
     TARGET_MARKETING_LOGINID,
 } from '@/utils/account-helpers';
 import { buyParameters, type BuyRequest } from './buy-params';
@@ -63,18 +64,84 @@ const createLocalRotBuyResponse = (req: TradeReq, stake: number) => {
             contract_id: contractId,
             transaction_id: txId,
             buy_price: safeStake,
-            payout: Number((safeStake * 1.95).toFixed(2)),
+            payout: Number((safeStake * 1.92).toFixed(2)),
             start_time: nowSec,
             shortcode: `${req.contract_type}_${req.symbol}_${contractId}`,
         },
     };
 };
 
-const shouldWinFromProfitability = (rate: number): boolean => {
-    const clamped = Math.max(0, Math.min(100, rate));
+const decideRotOutcome = (cfg: RotMarketingConfig): boolean => {
+    if (!cfg.profitabilityEnabled) {
+        return Math.random() < 0.485;
+    }
+    const clamped = Math.max(0, Math.min(100, cfg.profitabilityRate));
     if (clamped <= 0) return false;
     if (clamped >= 100) return true;
     return Math.random() * 100 < clamped;
+};
+
+const pickDigitForContract = (contractType: string, won: boolean, barrierRaw?: unknown): number | null => {
+    const t = String(contractType || '').toUpperCase();
+    const barrierNum = Number(barrierRaw);
+
+    if (t === 'DIGITEVEN') {
+        const pool = won ? [0, 2, 4, 6, 8] : [1, 3, 5, 7, 9];
+        return pool[Math.floor(Math.random() * pool.length)];
+    }
+    if (t === 'DIGITODD') {
+        const pool = won ? [1, 3, 5, 7, 9] : [0, 2, 4, 6, 8];
+        return pool[Math.floor(Math.random() * pool.length)];
+    }
+    if (t === 'DIGITOVER') {
+        const barrier = Number.isFinite(barrierNum) ? Math.max(0, Math.min(8, Math.floor(barrierNum))) : 4;
+        const pool = won
+            ? Array.from({ length: 9 - barrier }, (_, idx) => barrier + 1 + idx)
+            : Array.from({ length: barrier + 1 }, (_, idx) => idx);
+        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 7 : 2;
+    }
+    if (t === 'DIGITUNDER') {
+        const barrier = Number.isFinite(barrierNum) ? Math.max(1, Math.min(9, Math.floor(barrierNum))) : 5;
+        const pool = won
+            ? Array.from({ length: barrier }, (_, idx) => idx)
+            : Array.from({ length: 10 - barrier }, (_, idx) => barrier + idx);
+        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : won ? 2 : 7;
+    }
+    if (t === 'DIGITMATCH' || t === 'DIGITDIFF') {
+        const targetDigit = Number.isFinite(barrierNum) ? Math.max(0, Math.min(9, Math.floor(barrierNum))) : 5;
+        const shouldMatchDigit = t === 'DIGITMATCH' ? won : !won;
+        if (shouldMatchDigit) return targetDigit;
+        const others = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(d => d !== targetDigit);
+        return others[Math.floor(Math.random() * others.length)];
+    }
+    return null;
+};
+
+const buildCoherentSpots = (contractType: string, won: boolean, startTime: number, barrierRaw?: unknown) => {
+    const baseEntry = 100 + ((startTime % 850) + Math.random() * 40);
+    const entrySpotNum = Number(baseEntry.toFixed(2));
+    const chosenDigit = pickDigitForContract(contractType, won, barrierRaw);
+
+    let exitSpotNum: number;
+    if (chosenDigit !== null) {
+        const rawExit = entrySpotNum + (won ? 0.14 : -0.14);
+        const scaledInt = Math.round(rawExit * 100);
+        const adjustedInt = Math.floor(scaledInt / 10) * 10 + chosenDigit;
+        exitSpotNum = Number((adjustedInt / 100).toFixed(2));
+    } else {
+        const t = String(contractType || '').toUpperCase();
+        const move = 0.25 + Math.random() * 0.35;
+        if (t === 'PUT') {
+            exitSpotNum = Number((entrySpotNum + (won ? -move : move)).toFixed(2));
+        } else {
+            exitSpotNum = Number((entrySpotNum + (won ? move : -move)).toFixed(2));
+        }
+    }
+
+    return {
+        entrySpot: entrySpotNum.toFixed(2),
+        exitSpot: exitSpotNum.toFixed(2),
+    };
 };
 
 const buildSimulatedContractPayload = (sim: SimulatedContractState, isSold: boolean) => {
@@ -148,16 +215,10 @@ const onContractUpdate = ({ data }: any) => {
     if (sim) {
         if (!c.is_sold) {
             const livePayload = buildSimulatedContractPayload(sim, false);
-            bus.emit('bot.contract', {
-                ...livePayload,
-                entry_spot: c.entry_spot ?? livePayload.entry_spot,
-                entry_tick: c.entry_tick ?? livePayload.entry_tick,
-            });
+            bus.emit('bot.contract', livePayload);
             positions.upsert(livePayload);
             return;
         }
-        if (c.entry_spot) sim.entry_spot = String(c.entry_spot);
-        if (c.exit_spot) sim.exit_spot = String(c.exit_spot);
         settleSimulatedContract(sim);
         return;
     }
@@ -212,7 +273,8 @@ export const dispatch = (req: TradeReq): Promise<TradeResult> => {
         const numericContractId = Number(buy.contract_id);
         const numericBuyId = Number(buy.transaction_id) || Date.now();
         const buyPrice = Number(buy.buy_price ?? req.stake);
-        const rawPayout = Number(buy.payout ?? buyPrice * 1.95);
+        const rawPayout = Number(buy.payout ?? buyPrice * 1.92);
+        const startTime = Number(buy.start_time) || Math.floor(Date.now() / 1000);
 
         if (rotActive && rotCfg) {
             const afterStakeCfg = adjustRotMarketingBalance(-buyPrice);
@@ -220,20 +282,28 @@ export const dispatch = (req: TradeReq): Promise<TradeResult> => {
                 syncMarketingClientBalance(afterStakeCfg.balance);
             }
 
-            const won = shouldWinFromProfitability(rotCfg.profitabilityRate);
+            const won = decideRotOutcome(rotCfg);
+            const reasonablePayout =
+                rawPayout > buyPrice * 1.05 && rawPayout <= buyPrice * 5
+                    ? rawPayout
+                    : buyPrice * 1.92;
             const profit = won
-                ? Number(Math.max(0.01, rawPayout > buyPrice ? rawPayout - buyPrice : buyPrice * 0.85).toFixed(2))
+                ? Number((reasonablePayout - buyPrice).toFixed(2))
                 : Number((-Math.abs(buyPrice)).toFixed(2));
             const sellPrice = won ? Number((buyPrice + profit).toFixed(2)) : 0;
-            const entryNum = Number(buy.start_time) ? 100 + ((Number(buy.start_time) % 900) + Math.random() * 50) : 123.45;
-            const exitNum = won ? entryNum + 0.42 : entryNum - 0.38;
+            const { entrySpot, exitSpot } = buildCoherentSpots(
+                req.contract_type,
+                won,
+                startTime,
+                (req as any).prediction ?? (req as any).barrier
+            );
 
             const sim: SimulatedContractState = {
                 contract_id: numericContractId,
                 buy_id: numericBuyId,
                 sell_id: numericBuyId + 1,
                 buy_price: buyPrice,
-                payout: won ? sellPrice : rawPayout,
+                payout: won ? sellPrice : 0,
                 sell_price: sellPrice,
                 profit,
                 won,
@@ -241,9 +311,9 @@ export const dispatch = (req: TradeReq): Promise<TradeResult> => {
                 contract_type: req.contract_type,
                 underlying: req.symbol,
                 shortcode: buy.shortcode || `${req.contract_type}_${req.symbol}_${numericContractId}`,
-                date_start: Number(buy.start_time) || Math.floor(Date.now() / 1000),
-                entry_spot: entryNum.toFixed(2),
-                exit_spot: exitNum.toFixed(2),
+                date_start: startTime,
+                entry_spot: entrySpot,
+                exit_spot: exitSpot,
                 settled: false,
             };
             simulatedContracts.set(numericContractId, sim);
