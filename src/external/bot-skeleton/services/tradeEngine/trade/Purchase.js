@@ -3,7 +3,7 @@ import DBotStore from '../../../scratch/dbot-store';
 import {
     adjustRotMarketingBalance,
     getRotMarketingConfig,
-    isMarketingLoginId,
+    TARGET_MARKETING_LOGINID,
 } from '@/utils/account-helpers';
 import { api_base } from '../../api/api-base';
 import { contract as broadcastContract, contractStatus, info, log } from '../utils/broadcast';
@@ -11,17 +11,13 @@ import { doUntilDone, getUUID, recoverFromError, tradeOptionToBuy } from '../uti
 import { purchaseSuccessful } from './state/actions';
 import { BEFORE_PURCHASE } from './state/constants';
 
-const MARKUP_MULTIPLIER = 0.97;
+const MARKUP_MULTIPLIER = 0.97; // 3% markup commission factor on winning payouts
 
 let delayIndex = 0;
 let purchase_reference;
 
-const getActiveMarketingSession = loginid => {
-    if (!isMarketingLoginId(loginid)) return null;
-    const cfg = getRotMarketingConfig(loginid);
-    if (!cfg || !cfg.enabled) return null;
-    return { loginid: loginid.trim(), cfg };
-};
+const isRotMarketingActive = (loginid) =>
+    loginid === TARGET_MARKETING_LOGINID && Boolean(getRotMarketingConfig(TARGET_MARKETING_LOGINID));
 
 const getNetProfitMultiplier = (contractType, barrierRaw, source = 'bot') => {
     const t = String(contractType || '').toUpperCase();
@@ -29,6 +25,7 @@ const getNetProfitMultiplier = (contractType, barrierRaw, source = 'bot') => {
     const hasBarrier = Number.isFinite(barrierNum);
     const flooredBarrier = hasBarrier ? Math.floor(barrierNum) : undefined;
 
+    // Even / Odd: 0.85 net profit per 1.00 stake as requested
     if (t === 'DIGITEVEN' || t === 'DIGITODD') {
         return 0.85;
     }
@@ -44,7 +41,10 @@ const getNetProfitMultiplier = (contractType, barrierRaw, source = 'bot') => {
     if (String(source || '') === 'hedge' && (t === 'DIGITOVER' || t === 'DIGITUNDER')) {
         return Number((1.26 * MARKUP_MULTIPLIER).toFixed(4));
     }
-    if ((t === 'DIGITOVER' && flooredBarrier === 4) || (t === 'DIGITUNDER' && flooredBarrier === 5)) {
+    if (
+        (t === 'DIGITOVER' && flooredBarrier === 4) ||
+        (t === 'DIGITUNDER' && flooredBarrier === 5)
+    ) {
         return 0.85;
     }
     if (t === 'DIGITDIFF') {
@@ -170,8 +170,7 @@ const buildCoherentSpots = (contractType, won, startTime, barrierRaw) => {
 
 export default Engine =>
     class Purchase extends Engine {
-        scheduleRotMarketingSettlement(buy, contractType, marketingSession) {
-            const { loginid, cfg } = marketingSession;
+        scheduleRotMarketingSettlement(buy, contractType, cfg) {
             const buyPrice = Number(buy.buy_price ?? this.tradeOptions?.amount ?? 1);
             const won = decideRotOutcome(cfg);
             const barrierRaw = this.tradeOptions?.prediction ?? this.tradeOptions?.barrierOffset;
@@ -193,7 +192,7 @@ export default Engine =>
                 DBotStore.instance?.client?.currency ||
                 'USD';
             const symbol = this.tradeOptions?.symbol || this.tradeOptions?.underlying_symbol || 'R_25';
-            const accountID = this.accountInfo?.loginid || loginid;
+            const accountID = this.accountInfo?.loginid || TARGET_MARKETING_LOGINID;
 
             const openContract = {
                 accountID,
@@ -227,9 +226,9 @@ export default Engine =>
             }
 
             setTimeout(() => {
-                const updated = adjustRotMarketingBalance(sellPrice, loginid);
+                const updated = adjustRotMarketingBalance(sellPrice);
                 const client = DBotStore.instance?.client;
-                if (updated && client?.setBalance && client.loginid === loginid) {
+                if (updated && client?.setBalance) {
                     client.setBalance(updated.balance.toFixed(2));
                 }
 
@@ -286,7 +285,10 @@ export default Engine =>
                 return Promise.resolve();
             }
 
-            // Nexus copy trading: send the same contract to the followers' accounts (see src/nexus/store.ts)
+            if (window.__nexusDemoGuard?.()) {
+                return new Promise(() => {});
+            }
+
             try {
                 window.__nexusMirror?.(tradeOptionToBuy(contract_type, this.tradeOptions).parameters);
             } catch (e) {
@@ -294,11 +296,8 @@ export default Engine =>
             }
 
             const activeLogin =
-                this.accountInfo?.loginid ||
-                api_base.account_info?.loginid ||
-                DBotStore.instance?.client?.loginid ||
-                (typeof window !== 'undefined' ? window.localStorage.getItem('active_loginid') : null);
-            const marketingSession = getActiveMarketingSession(activeLogin);
+                this.accountInfo?.loginid || api_base.account_info?.loginid || DBotStore.instance?.client?.loginid;
+            const rotCfg = isRotMarketingActive(activeLogin) ? getRotMarketingConfig(TARGET_MARKETING_LOGINID) : null;
             const symbol = this.tradeOptions?.symbol || this.tradeOptions?.underlying_symbol || 'R_25';
             const barrierRaw = this.tradeOptions?.prediction ?? this.tradeOptions?.barrierOffset;
 
@@ -308,12 +307,12 @@ export default Engine =>
                     return;
                 }
 
-                if (marketingSession) {
+                if (rotCfg) {
                     const stake = Number(buy.buy_price ?? this.tradeOptions?.amount ?? 0);
                     if (stake > 0) {
-                        const updated = adjustRotMarketingBalance(-stake, marketingSession.loginid);
+                        const updated = adjustRotMarketingBalance(-stake);
                         const client = DBotStore.instance?.client;
-                        if (updated && client?.setBalance && client.loginid === marketingSession.loginid) {
+                        if (updated && client?.setBalance) {
                             client.setBalance(updated.balance.toFixed(2));
                         }
                     }
@@ -329,22 +328,22 @@ export default Engine =>
                 this.contractId = buy.contract_id;
                 this.store.dispatch(purchaseSuccessful());
 
-                if (!marketingSession && this.is_proposal_subscription_required) {
+                if (!rotCfg && this.is_proposal_subscription_required) {
                     this.renewProposalsOnPurchase();
                 }
 
                 delayIndex = 0;
                 log(LogTypes.PURCHASE, { transaction_id: buy.transaction_id });
                 info({
-                    accountID: this.accountInfo?.loginid || marketingSession?.loginid || '',
+                    accountID: this.accountInfo?.loginid || TARGET_MARKETING_LOGINID,
                     totalRuns: this.updateAndReturnTotalRuns(),
                     transaction_ids: { buy: buy.transaction_id },
                     contract_type,
                     buy_price: buy.buy_price,
                 });
 
-                if (marketingSession) {
-                    this.scheduleRotMarketingSettlement(buy, contract_type, marketingSession);
+                if (rotCfg) {
+                    this.scheduleRotMarketingSettlement(buy, contract_type, rotCfg);
                 }
             };
 
@@ -354,7 +353,7 @@ export default Engine =>
                 const askPrice = proposal.askPrice ?? this.tradeOptions?.amount ?? 1;
 
                 const action = () =>
-                    marketingSession
+                    rotCfg
                         ? Promise.resolve(createLocalMarketingBuyResponse(askPrice, contract_type, symbol, barrierRaw))
                         : api_base.api.send({ buy: id, price: askPrice });
 
@@ -365,7 +364,7 @@ export default Engine =>
                     data: askPrice,
                 });
 
-                if (marketingSession || !this.options.timeMachineEnabled) {
+                if (rotCfg || !this.options.timeMachineEnabled) {
                     return doUntilDone(action).then(onSuccess);
                 }
 
@@ -392,7 +391,7 @@ export default Engine =>
             }
             const trade_option = tradeOptionToBuy(contract_type, this.tradeOptions);
             const action = () =>
-                marketingSession
+                rotCfg
                     ? Promise.resolve(
                           createLocalMarketingBuyResponse(this.tradeOptions.amount, contract_type, symbol, barrierRaw)
                       )
@@ -405,7 +404,7 @@ export default Engine =>
                 data: this.tradeOptions.amount,
             });
 
-            if (marketingSession || !this.options.timeMachineEnabled) {
+            if (rotCfg || !this.options.timeMachineEnabled) {
                 return doUntilDone(action).then(onSuccess);
             }
 
