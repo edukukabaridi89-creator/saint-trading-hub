@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { generateOAuthURL } from '@/components/shared';
 import { APP_NAME, LOGO_URL, TAGLINE } from './config';
+import { PoweredBy } from './powered-by';
 import { TokenLoginModal } from './token-login';
 
 /** Shown right after the splash to visitors who are not logged in: log in, sign up, or log in with a token. */
@@ -34,6 +35,7 @@ const Gate = () => {
                 <button className='nx-gate__btn nx-gate__btn--main' disabled={busy} onClick={() => go()}>Log in</button>
                 <button className='nx-gate__btn nx-gate__btn--alt' disabled={busy} onClick={() => go('registration')}>Sign up</button>
                 <button className='nx-gate__btn' onClick={() => setToken(true)}>Log in with token</button>
+                <PoweredBy />
             </div>
             {token && <TokenLoginModal onClose={() => setToken(false)} />}
         </div>

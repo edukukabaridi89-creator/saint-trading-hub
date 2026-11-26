@@ -2,6 +2,7 @@
 // Updated to use brand configuration for footer elements visibility
 // Controls language settings and theme toggle via brand.config.json
 import brandConfig from '@/../brand.config.json';
+import { PoweredBy } from '@/nexus/powered-by';
 import { useApiBase } from '@/hooks/useApiBase';
 import useModalManager from '@/hooks/useModalManager';
 import { getActiveTabUrl } from '@/utils/getActiveTabUrl';
@@ -30,6 +31,7 @@ const Footer = () => {
     const openLanguageSettingModal = () => showModal('DesktopLanguagesModal');
     return (
         <footer className='app-footer'>
+            <PoweredBy />
             <FullScreen />
             {isAuthorized && <LogoutFooter />}
             {/* [AI] Conditionally render language settings based on brand config */}

@@ -4,7 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { nexus } from '@/nexus/store';
 import { runTrade } from '@/nexus/run-trade';
 import { useRepeat } from '@/nexus/use-repeat';
-import { DigitCircles, Field, Num, Panel, SymbolSelect, TickChart } from '@/nexus/ui';
+import { DigitCircles, Field, Num, Panel, SymbolSelect } from '@/nexus/ui';
 
 const TYPES = [
     ['DIGITEVEN', 'Even', 0], ['DIGITODD', 'Odd', 0], ['DIGITOVER', 'Over', 1], ['DIGITUNDER', 'Under', 1],
@@ -31,7 +31,7 @@ export const BulkTrader = observer(() => {
                 <button className='nx-btn nx-btn--go' onClick={go}>EXECUTE ×{runs}</button>
                 {repeat}
             </Panel>
-            <Panel title='Digit circles'><DigitCircles /><TickChart /></Panel>
+            <Panel title='Digit circles'><DigitCircles /></Panel>
         </div>
     );
 });

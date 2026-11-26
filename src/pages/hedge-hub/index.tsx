@@ -4,7 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { nexus } from '@/nexus/store';
 import { runTrade } from '@/nexus/run-trade';
 import { useRepeat } from '@/nexus/use-repeat';
-import { DigitCircles, Field, Num, Panel, SymbolSelect, TickChart } from '@/nexus/ui';
+import { DigitCircles, Field, Num, Panel, SymbolSelect } from '@/nexus/ui';
 
 export const HedgeHub = observer(() => {
     const [stake, setStake] = useState(1);
@@ -28,7 +28,7 @@ export const HedgeHub = observer(() => {
                 <button className='nx-btn nx-btn--hedge' onClick={hedge}>HEDGE NOW</button>
                 {repeat}
             </Panel>
-            <Panel title='Digit circles'><DigitCircles /><TickChart /></Panel>
+            <Panel title='Digit circles'><DigitCircles /></Panel>
         </div>
     );
 });

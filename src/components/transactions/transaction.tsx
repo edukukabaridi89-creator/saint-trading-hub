@@ -90,19 +90,14 @@ const PopoverItem = ({ icon, title, children }: TPopoverItem) => (
 
 const PopoverContent = ({ contract }: TPopoverContent) => (
     <div className='transactions__popover-content'>
-        {(contract.contract_id || contract.transaction_ids) && (
+        {contract.transaction_ids && (
             <PopoverItem title={<Localize i18n_default_text='Reference IDs' />}>
-                {contract.contract_id && (
-                    <div className='transactions__popover-value'>
-                        {`${contract.contract_id} ${localize('(Contract)')}`}
-                    </div>
-                )}
-                {contract.transaction_ids?.buy && (
+                {contract.transaction_ids.buy && (
                     <div className='transactions__popover-value'>
                         {`${contract.transaction_ids.buy} ${localize('(Buy)')}`}
                     </div>
                 )}
-                {contract.transaction_ids?.sell && (
+                {contract.transaction_ids.sell && (
                     <div className='transactions__popover-value'>
                         {`${contract.transaction_ids.sell} ${localize('(Sell)')}`}
                     </div>

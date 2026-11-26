@@ -23,6 +23,8 @@ export const CopyTrading = page(() => import('@/pages/copy-trading'), 'CopyTradi
 export const RiskCalculatorPage = page(() => import('@/pages/risk-calculator'), 'RiskCalculator');
 export const MatchesProPage = page(() => import('@/pages/matches-pro'), 'MatchesPro');
 export const AlphaStrikePage = page(() => import('@/pages/alpha-strike'), 'AlphaStrike');
+export const EvenOddRapidPage = page(() => import('@/pages/eo-rapid'), 'EvenOddRapid');
+export const BasicBotPage = page(() => import('@/pages/basic-bot'), 'BasicBot');
 
 const Loading = <div className='nx-loading'>Loading…</div>;
 

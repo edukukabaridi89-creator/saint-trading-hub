@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { useEffect } from 'react';
 import { observable, runInAction } from 'mobx';
+import { celebrateTP } from './celebrate';
 import { dispatch } from './dispatcher';
 import { hub } from './ticks-hub';
 
@@ -11,6 +12,7 @@ export const as = observable({
     barrier: 4, // Over / Under digit
     n: 10, // the last n ticks are compared with the n before them
     follow: true, // true: trade the side that is rising; false: trade the opposite side
+    strength: 2, // how far ahead the rising side must be before it trades: 1 normal, 2 sharp, 3 sharpest
     auto: true,
     running: false,
     stake: 1,
@@ -30,7 +32,7 @@ export const as = observable({
 type Side = { label: string; type: string; barrier?: number; now: number; prev: number };
 
 /** Compares the share of each side in the last n ticks with the n ticks before. The side with the bigger rise is the signal. */
-export const analyse = (digits: number[], n: number, kind: Kind, barrier: number, follow: boolean, prices: number[] = []) => {
+export const analyse = (digits: number[], n: number, kind: Kind, barrier: number, follow: boolean, prices: number[] = [], strength = 1) => {
     let A: Side, B: Side;
     if (kind === 'RF') {
         if (prices.length < 2 * n + 1) return null;
@@ -48,8 +50,8 @@ export const analyse = (digits: number[], n: number, kind: Kind, barrier: number
     }
     const ra = A.now - A.prev, rb = B.now - B.prev;
     let rising: Side | null = null;
-    if (ra > rb && ra > 0) rising = A;
-    else if (rb > ra && rb > 0) rising = B;
+    if (ra > rb && ra > 0 && ra - rb >= strength) rising = A;
+    else if (rb > ra && rb > 0 && rb - ra >= strength) rising = B;
     const pick = rising ? (follow ? rising : rising === A ? B : A) : null;
     return { A, B, ra, rb, rising, pick, n };
 };
@@ -59,7 +61,7 @@ export const stakeNow = () => Math.round(as.stake * (as.mg.on ? as.mg.mult ** Ma
 export const refreshAlpha = () => {
     const f = hub.feed(as.symbol);
     if (!f) return;
-    runInAction(() => (as.view = analyse(f.digits, as.n, as.kind, as.barrier, as.follow, f.prices)));
+    runInAction(() => (as.view = analyse(f.digits, as.n, as.kind, as.barrier, as.follow, f.prices, as.strength)));
 };
 
 export const fire = async () => {
@@ -81,7 +83,8 @@ export const fire = async () => {
             as.last = `${side.label}: ${r.won ? 'Won' : 'Lost'} ${Math.abs(r.profit ?? 0).toFixed(2)}`;
             if ((as.tp > 0 && as.pnl >= as.tp) || (as.sl > 0 && as.pnl <= -as.sl)) {
                 as.running = false;
-                as.last += as.pnl >= 0 ? ' · take profit reached, stopped.' : ' · stop loss reached, stopped.';
+                if (as.pnl >= 0) as.last = celebrateTP(as.pnl);
+                else as.last += ' · stop loss reached, stopped.';
             }
         }
         as.busy = false;

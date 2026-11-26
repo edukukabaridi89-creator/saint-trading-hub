@@ -30,6 +30,8 @@ export const DBOT_TABS: TDashboardTabIndex = Object.freeze({
     RISK_CALC: 15,
     MATCHES_PRO: 16,
     ALPHA_STRIKE: 17,
+    EO_RAPID: 18,
+    BASIC_BOT: 19,
 });
 
 export const MAX_STRATEGIES = 10;
@@ -53,6 +55,8 @@ export const TAB_IDS = [
     'id-risk-calc',
     'id-matches-pro',
     'id-alpha-strike',
+    'id-eo-rapid',
+    'id-basic-bot',
 ];
 
 export const DEBOUNCE_INTERVAL_TIME = 500;

@@ -1,8 +1,10 @@
 // @ts-nocheck
 import { useEffect } from 'react';
 import { observable, runInAction } from 'mobx';
+import { celebrateTP } from './celebrate';
 import { dispatch } from './dispatcher';
 import { nexus } from './store';
+import { recentRisers } from './rise';
 import { hub } from './ticks-hub';
 
 export const mp = observable({
@@ -12,7 +14,7 @@ export const mp = observable({
     count: 3, // how many digits are covered at once
     stake: 1, // stake per digit
     ticks: 1,
-    n: 10, // short look-back: the last n ticks are compared with the n before them
+    n: 5, // look at the digits that rose on the latest n ticks
     mg: { on: false, mult: 2, max: 4 }, // martingale on a lost round
     losses: 0,
     tp: 0,
@@ -43,10 +45,17 @@ export const pickDigits = (digits: number[], n: number, count: number) => {
     return { picks: ranked.slice(0, count), scores };
 };
 
+/** Digits that rose on the latest `n` ticks (the digit landed and its share of the last 1,000 ticks went up), newest first. */
+const pickRisers = (symbol: string, n: number, count: number) => {
+    const list = recentRisers(symbol, n);
+    const scores: Record<number, number> = {};
+    list.forEach((d, i) => (scores[d] = list.length - i));
+    return { picks: list.slice(0, count), scores };
+};
+
 export const refreshPicks = () => {
-    const f = hub.feed(mp.symbol);
-    if (!f) return;
-    const r = pickDigits(f.digits, mp.n, mp.count);
+    if (!hub.feed(mp.symbol)) return;
+    const r = pickRisers(mp.symbol, mp.n, mp.count);
     runInAction(() => { mp.picks = r.picks; mp.scores = r.scores; });
 };
 
@@ -75,7 +84,8 @@ export const placeRound = async () => {
             mp.last = `${picks.join(' · ')}: ${profit >= 0 ? 'Won' : 'Lost'} ${Math.abs(profit).toFixed(2)}${err ? ' (one trade was rejected)' : ''}`;
             if ((mp.tp > 0 && mp.pnl >= mp.tp) || (mp.sl > 0 && mp.pnl <= -mp.sl)) {
                 mp.running = false;
-                mp.last += mp.pnl >= 0 ? ' · take profit reached, stopped.' : ' · stop loss reached, stopped.';
+                if (mp.pnl >= 0) mp.last = celebrateTP(mp.pnl);
+                else mp.last += ' · stop loss reached, stopped.';
             }
         }
         mp.busy = false;
@@ -88,9 +98,8 @@ export const useMatchesEngine = () =>
         hub.watch([mp.symbol]);
         return hub.onTick(sym => {
             if (sym !== mp.symbol) return;
-            const f = hub.feed(sym);
-            if (!f) return;
-            const r = pickDigits(f.digits, mp.n, mp.count);
+            if (!hub.feed(sym)) return;
+            const r = pickRisers(sym, mp.n, mp.count);
             runInAction(() => {
                 mp.picks = r.picks;
                 mp.scores = r.scores;

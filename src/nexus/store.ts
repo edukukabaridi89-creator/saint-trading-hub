@@ -2,7 +2,6 @@ import { makeAutoObservable, runInAction } from 'mobx';
 import { api_base } from '@/external/bot-skeleton';
 import { buyParameters, type BuyRequest } from './buy-params';
 import { isProduction } from '@/components/shared';
-import { TARGET_MARKETING_LOGINID } from '@/utils/account-helpers';
 import brandConfig from '../../brand.config.json';
 import { APP_ID } from './config';
 import { SpeedMode, speedState } from './speed';
@@ -103,15 +102,15 @@ class NexusStore {
     };
 
     // ---------- Copy trading ----------
+    // Followers are Deriv API tokens (personal access tokens with the "trade" scope). Their accounts and live balances come from
+    // GET .../options/accounts, and every trade placed here (pages AND bots) is copied with ONE call to Deriv's
+    // bulk-purchase endpoint, to the followers' accounts of the same type as the logged-in account (demo -> demo, real -> real).
     private persist = () => localStorage.setItem(LS_TOKENS, JSON.stringify(this.tokens.map(t => t.token)));
     private pollTimer: ReturnType<typeof setInterval> | null = null;
     private api = () => `${brandConfig.platform.derivws.url[isProduction() ? 'production' : 'staging']}${brandConfig.platform.derivws.directories.options}`;
     private headers = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}`, 'Deriv-App-ID': APP_ID });
     /** 'demo' when the account logged in to this app is a demo account. */
-    masterType = (): 'demo' | 'real' => {
-        if (this.root?.client?.loginid === TARGET_MARKETING_LOGINID) return 'real';
-        return this.root?.client?.is_virtual ? 'demo' : 'real';
-    };
+    masterType = (): 'demo' | 'real' => (this.root?.client?.is_virtual ? 'demo' : 'real');
 
     refreshToken = async (token: string) => {
         const cur = () => this.tokens.find(x => x.token === token);

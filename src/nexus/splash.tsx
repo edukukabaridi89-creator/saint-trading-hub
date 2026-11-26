@@ -1,9 +1,11 @@
 // @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { APP_NAME, SUBLINE, TAGLINE, THEME } from './config';
+import { APP_NAME, LOGO_URL, SUBLINE, TAGLINE, THEME } from './config';
 
-const Crown = () => (
+const Crown = () => LOGO_URL ? (
+    <img className='nx-crown' src={LOGO_URL} height='64' alt='Prime Trader' style={{ borderRadius: 14, background: '#fff', padding: '6px 10px' }} />
+) : (
     <svg className='nx-crown' viewBox='0 0 120 100' width='150' height='125' aria-hidden='true'>
         <defs><linearGradient id='qg' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stopColor='#b8a6ff' /><stop offset='0.55' stopColor='#7c5cff' /><stop offset='1' stopColor='#ffb454' /></linearGradient></defs>
         <circle cx='60' cy='52' r='46' fill='url(#qg)' stroke='#ffffff' strokeOpacity='0.75' strokeWidth='2.4' />
@@ -12,6 +14,7 @@ const Crown = () => (
         <circle cx='60' cy='78' r='5' fill='#fff' fillOpacity='0.9' />
     </svg>
 );
+import { PoweredBy } from './powered-by';
 import { applyTheme } from './theme';
 import { mountWelcome } from './welcome';
 import { mountEntryGate } from './entry-gate';
@@ -82,6 +85,7 @@ export const Splash = ({ onDone }: { onDone: () => void }) => {
                 <h1>{APP_NAME}</h1>
                 <p>“{TAGLINE}”</p>
                 <p className='nx-splash__sub'>{SUBLINE}</p>
+                <PoweredBy />
                 <div className='nx-splash__bar'><i style={{ width: `${pct}%` }} /></div>
                 <div className='nx-splash__steps'>
                     <span className={feed ? 'ok' : ''}>{feed ? '✓' : '·'} Market feed {feed ? 'live' : 'connecting'}</span>

@@ -9,7 +9,6 @@ import { useApiBase } from '@/hooks/useApiBase';
 import { useLogout } from '@/hooks/useLogout';
 import { useStore } from '@/hooks/useStore';
 import { TSocketResponseData } from '@/types/api-types';
-import { getRotMarketingConfig, TARGET_MARKETING_LOGINID } from '@/utils/account-helpers';
 import { clearInvalidTokenParams } from '@/utils/url-utils';
 import { useTranslations } from '@deriv-com/translations';
 
@@ -138,14 +137,7 @@ const CoreStoreProvider: React.FC<{ children: React.ReactNode }> = observer(({ c
             if (msg_type === 'balance' && data && !error) {
                 const balance = data.balance;
                 if (balance && typeof balance.balance === 'number') {
-                    const streamLoginid = balance.loginid || client?.loginid;
-                    const marketingCfg = getRotMarketingConfig(streamLoginid);
-
-                    if (marketingCfg && streamLoginid === TARGET_MARKETING_LOGINID) {
-                        client.setBalance(marketingCfg.balance.toString());
-                    } else {
-                        client.setBalance(balance.balance.toString());
-                    }
+                    client.setBalance(balance.balance.toString());
 
                     if (balance.currency) {
                         client.setCurrency(balance.currency);

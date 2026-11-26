@@ -17,7 +17,7 @@ const Bar = ({ side, rise, best }: any) => (
 );
 
 export const AlphaStrike = observer(() => {
-    useEffect(() => { hub.watch([as.symbol]); refreshAlpha(); const t = setInterval(refreshAlpha, 1000); return () => clearInterval(t); }, [as.symbol, as.n, as.kind, as.barrier, as.follow]);
+    useEffect(() => { hub.watch([as.symbol]); refreshAlpha(); const t = setInterval(refreshAlpha, 1000); return () => clearInterval(t); }, [as.symbol, as.n, as.kind, as.barrier, as.follow, as.strength]);
     const v = as.view;
     const ready = !!v?.pick;
     return (
@@ -48,6 +48,11 @@ export const AlphaStrike = observer(() => {
                         </select>
                     </Field>
                 </div>
+                <Field label='Signal strength'>
+                    <select className='nx-input' value={as.strength} onChange={e => (as.strength = Number(e.target.value))}>
+                        <option value={1}>Normal</option><option value={2}>Sharp (recommended)</option><option value={3}>Sharpest (trades less often)</option>
+                    </select>
+                </Field>
                 <Field label='Who takes the trades'>
                     <div className='nx-seg'>
                         <button className={as.auto ? 'on' : ''} onClick={() => runInAction(() => { as.auto = true; as.running = false; })}>Automatic</button>

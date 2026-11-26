@@ -41,12 +41,11 @@ const FormatMessage = ({ logType, className, extra }: TFormatMessageProps) => {
             }
             case LogTypes.PROFIT: {
                 const { currency, profit } = extra;
-                const safeProfit = Math.abs(Number(profit ?? 0));
                 return (
                     <Localize
                         i18n_default_text='Profit amount: <0>{{profit}}</0>'
                         values={{
-                            profit: `${formatMoney(currency, safeProfit, true)} ${getCurrencyDisplayCode(currency)}`,
+                            profit: `${formatMoney(currency, profit, true)} ${getCurrencyDisplayCode(currency)}`,
                         }}
                         components={[<Text key={0} size='xxs' styles={{ color: 'var(--status-success)' }} />]}
                     />
@@ -54,12 +53,11 @@ const FormatMessage = ({ logType, className, extra }: TFormatMessageProps) => {
             }
             case LogTypes.LOST: {
                 const { currency, profit } = extra;
-                const safeLoss = Math.abs(Number(profit ?? 0));
                 return (
                     <Localize
                         i18n_default_text='Loss amount: <0>{{profit}}</0>'
                         values={{
-                            profit: `${formatMoney(currency, safeLoss, true)} ${getCurrencyDisplayCode(currency)}`,
+                            profit: `${formatMoney(currency, profit, true)} ${getCurrencyDisplayCode(currency)}`,
                         }}
                         components={[<Text key={0} size='xxs' styles={{ color: 'var(--status-danger)' }} />]}
                     />

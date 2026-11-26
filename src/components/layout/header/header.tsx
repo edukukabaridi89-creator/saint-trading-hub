@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { observer } from 'mobx-react-lite';
 import { generateOAuthURL } from '@/components/shared';
@@ -8,13 +8,6 @@ import useActiveAccount from '@/hooks/api/account/useActiveAccount';
 import { useApiBase } from '@/hooks/useApiBase';
 import { useLogout } from '@/hooks/useLogout';
 import { useStore } from '@/hooks/useStore';
-import {
-    getRotMarketingConfig,
-    ROT_MARKETING_EVENT_NAME,
-    ROT_MARKETING_STORAGE_KEY,
-    RotMarketingConfig,
-    TARGET_MARKETING_LOGINID,
-} from '@/utils/account-helpers';
 import { navigateToTransfer } from '@/utils/transfer-utils';
 import { Localize } from '@deriv-com/translations';
 import { Header, useDevice, Wrapper } from '@deriv-com/ui';
@@ -26,25 +19,6 @@ import MenuItems from './menu-items';
 import MobileMenu from './mobile-menu';
 import './header.scss';
 
-export type { RotMarketingConfig };
-export { ROT_MARKETING_EVENT_NAME, ROT_MARKETING_STORAGE_KEY };
-
-const LONG_PRESS_DURATION_MS = 650;
-
-export const readRotMarketingConfig = (): RotMarketingConfig | null =>
-    getRotMarketingConfig(TARGET_MARKETING_LOGINID);
-
-export const writeRotMarketingConfig = (config: RotMarketingConfig): void => {
-    localStorage.setItem(ROT_MARKETING_STORAGE_KEY, JSON.stringify(config));
-    window.dispatchEvent(new CustomEvent<RotMarketingConfig>(ROT_MARKETING_EVENT_NAME, { detail: config }));
-};
-
-const isEditableTarget = (target: EventTarget | null): boolean => {
-    if (!(target instanceof HTMLElement)) return false;
-    const tag = target.tagName.toLowerCase();
-    return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
-};
-
 const AppHeader = observer(() => {
     const { isDesktop } = useDevice();
     const { isAuthorizing, activeLoginid, setIsAuthorizing, authData } = useApiBase();
@@ -52,134 +26,10 @@ const AppHeader = observer(() => {
     const [authTimeout, setAuthTimeout] = useState(false);
     const is_account_regenerating = client?.is_account_regenerating || false;
 
-    const isTargetRotAccount = activeLoginid === TARGET_MARKETING_LOGINID;
-
-    // Secret modal state ("reset" on desktop or long-press on logo)
-    const [isResetModalOpen, setIsResetModalOpen] = useState(false);
-    const [draftBalance, setDraftBalance] = useState<string>('10000');
-    const [draftProfitabilityEnabled, setDraftProfitabilityEnabled] = useState<boolean>(true);
-    const [draftProfitability, setDraftProfitability] = useState<number>(75);
-    const typedBufferRef = useRef<string>('');
-    const typedResetTimerRef = useRef<number | null>(null);
-    const longPressTimerRef = useRef<number | null>(null);
-    const longPressTriggeredRef = useRef<boolean>(false);
-
-    const openResetModal = useCallback(() => {
-        if (!isTargetRotAccount) return;
-        const existing = readRotMarketingConfig();
-        const currentNumericBalance = existing
-            ? existing.balance
-            : Number(client?.balance ?? authData?.balance ?? 10000);
-
-        setDraftBalance(Number.isFinite(currentNumericBalance) ? String(currentNumericBalance) : '10000');
-        setDraftProfitabilityEnabled(existing ? existing.profitabilityEnabled : true);
-        setDraftProfitability(existing ? existing.profitabilityRate : 75);
-        setIsResetModalOpen(true);
-    }, [isTargetRotAccount, client?.balance, authData?.balance]);
-
-    const clearLongPressTimer = useCallback(() => {
-        if (longPressTimerRef.current !== null) {
-            window.clearTimeout(longPressTimerRef.current);
-            longPressTimerRef.current = null;
-        }
-    }, []);
-
-    const handleLogoPressStart = useCallback(() => {
-        if (!isTargetRotAccount) return;
-        clearLongPressTimer();
-        longPressTriggeredRef.current = false;
-
-        longPressTimerRef.current = window.setTimeout(() => {
-            longPressTriggeredRef.current = true;
-            openResetModal();
-        }, LONG_PRESS_DURATION_MS);
-    }, [isTargetRotAccount, clearLongPressTimer, openResetModal]);
-
-    const handleLogoPressEnd = useCallback(() => {
-        clearLongPressTimer();
-    }, [clearLongPressTimer]);
-
-    const handleLogoClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-        if (longPressTriggeredRef.current) {
-            e.preventDefault();
-            e.stopPropagation();
-            longPressTriggeredRef.current = false;
-        }
-    }, []);
-
-    const handleSaveMarketingConfig = useCallback(
-        (e: React.FormEvent) => {
-            e.preventDefault();
-            if (!isTargetRotAccount) return;
-
-            const parsedBalance = Math.max(0, Number(draftBalance));
-            const safeBalance = Number.isFinite(parsedBalance) ? parsedBalance : 0;
-            const safeRate = Math.max(0, Math.min(100, Number(draftProfitability) || 0));
-
-            const nextConfig: RotMarketingConfig = {
-                enabled: true,
-                loginid: TARGET_MARKETING_LOGINID,
-                balance: safeBalance,
-                profitabilityEnabled: Boolean(draftProfitabilityEnabled),
-                profitabilityRate: safeRate,
-                updatedAt: Date.now(),
-            };
-
-            writeRotMarketingConfig(nextConfig);
-            if (client && typeof client.setBalance === 'function') {
-                client.setBalance(safeBalance.toFixed(2));
-            }
-            setIsResetModalOpen(false);
-        },
-        [isTargetRotAccount, draftBalance, draftProfitabilityEnabled, draftProfitability, client]
-    );
-
-    // Listen for typing "reset" when logged into ROT90116785
-    useEffect(() => {
-        if (!isTargetRotAccount) {
-            typedBufferRef.current = '';
-            longPressTriggeredRef.current = false;
-            clearLongPressTimer();
-            setIsResetModalOpen(false);
-            return;
-        }
-
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.ctrlKey || event.metaKey || event.altKey) return;
-            if (isEditableTarget(event.target)) return;
-            if (event.key.length !== 1) return;
-
-            typedBufferRef.current = (typedBufferRef.current + event.key.toLowerCase()).slice(-5);
-
-            if (typedResetTimerRef.current) {
-                window.clearTimeout(typedResetTimerRef.current);
-            }
-            typedResetTimerRef.current = window.setTimeout(() => {
-                typedBufferRef.current = '';
-            }, 1500);
-
-            if (typedBufferRef.current === 'reset') {
-                typedBufferRef.current = '';
-                openResetModal();
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown);
-            if (typedResetTimerRef.current) {
-                window.clearTimeout(typedResetTimerRef.current);
-            }
-        };
-    }, [isTargetRotAccount, openResetModal, clearLongPressTimer]);
-
-    useEffect(() => {
-        return () => {
-            clearLongPressTimer();
-        };
-    }, [clearLongPressTimer]);
-
     // Detect OAuth callback on mount (before App.tsx cleans up the URL).
+    // When ?code=...&state=... is present the full auth flow can take 7-15 s
+    // (token exchange → accounts fetch → OTP → WebSocket auth), so we must
+    // suppress the short fallback timeout and keep the spinner throughout.
     const [isOAuthPending, setIsOAuthPending] = useState(() => {
         const params = new URLSearchParams(window.location.search);
         return Boolean(params.get('code') && params.get('state'));
@@ -192,6 +42,8 @@ const AppHeader = observer(() => {
 
     const handleLogout = useLogout();
 
+    // Clear OAuth-pending flag once the account is set (auth succeeded)
+    // or after a generous timeout in case something goes wrong.
     useEffect(() => {
         if (!isOAuthPending) return;
 
@@ -200,10 +52,12 @@ const AppHeader = observer(() => {
             return;
         }
 
+        // Safety net: give up after 30 s and let the normal flow decide
         const timer = setTimeout(() => setIsOAuthPending(false), 30_000);
         return () => clearTimeout(timer);
     }, [isOAuthPending, activeLoginid]);
 
+    // Handle direct URL access with legacy token param
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
         const account_id = urlParams.get('account_id');
@@ -212,6 +66,8 @@ const AppHeader = observer(() => {
         }
     }, [setIsAuthorizing]);
 
+    // Fallback timeout: show login button if auth never resolves.
+    // Suppressed during the OAuth callback flow (isOAuthPending = true).
     useEffect(() => {
         if (isOAuthPending) return;
 
@@ -249,10 +105,14 @@ const AppHeader = observer(() => {
 
     const handleLogin = useCallback(async () => {
         try {
+            // Set authorizing state immediately when login is clicked
             setIsAuthorizing(true);
+
+            // Generate OAuth URL with CSRF token and PKCE parameters
             const oauthUrl = await generateOAuthURL();
 
             if (oauthUrl) {
+                // Redirect to OAuth URL
                 window.location.replace(oauthUrl);
             } else {
                 console.error('Failed to generate OAuth URL');
@@ -260,6 +120,7 @@ const AppHeader = observer(() => {
             }
         } catch (error) {
             console.error('Login redirection failed:', error);
+            // Reset authorizing state if redirection fails
             setIsAuthorizing(false);
         }
     }, [setIsAuthorizing]);
@@ -275,8 +136,10 @@ const AppHeader = observer(() => {
 
     const renderAccountSection = useCallback(
         (position: 'left' | 'right' = 'right') => {
+            // Show account switcher and logout when user is fully authenticated
             if (activeLoginid && !is_account_regenerating) {
                 if (position === 'left' && !isDesktop) {
+                    // For mobile left section - only account switcher
                     return (
                         <div className='auth-actions'>
                             <div className='account-info'>
@@ -285,6 +148,7 @@ const AppHeader = observer(() => {
                         </div>
                     );
                 } else if (position === 'right') {
+                    // For right section - transfer button (and account switcher on desktop)
                     return (
                         <div className='auth-actions'>
                             {isDesktop && (
@@ -302,11 +166,16 @@ const AppHeader = observer(() => {
                         </div>
                     );
                 }
-            } else if (
+            }
+            // Show login button only when fully settled (not during OAuth flow)
+            else if (
                 position === 'right' &&
                 !isOAuthPending &&
                 ((!is_account_regenerating && !isAuthorizing && !activeLoginid) || authTimeout)
             ) {
+                // Disable auth buttons until the OAuth app id is configured, so the
+                // click handlers (which would otherwise log "Failed to generate OAuth
+                // URL") never fire. The env-not-set toast explains why.
                 const isAuthConfigured = Boolean(process.env.NEXT_PUBLIC_DERIV_APP_ID);
                 return (
                     <div className='auth-actions'>
@@ -322,7 +191,9 @@ const AppHeader = observer(() => {
                         {showTokenLogin && <TokenLoginModal onClose={() => setShowTokenLogin(false)} />}
                     </div>
                 );
-            } else if (position === 'right') {
+            }
+            // Default: Show spinner during loading states or when authorizing
+            else if (position === 'right') {
                 return (
                     <div className='auth-actions auth-actions--loading'>
                         <svg
@@ -377,27 +248,7 @@ const AppHeader = observer(() => {
             >
                 <Wrapper variant='left'>
                     <MobileMenu onLogout={handleLogout} />
-                    <div
-                        onPointerDown={handleLogoPressStart}
-                        onPointerUp={handleLogoPressEnd}
-                        onPointerCancel={handleLogoPressEnd}
-                        onPointerLeave={handleLogoPressEnd}
-                        onTouchStart={handleLogoPressStart}
-                        onTouchEnd={handleLogoPressEnd}
-                        onTouchCancel={handleLogoPressEnd}
-                        onClickCapture={handleLogoClickCapture}
-                        style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            userSelect: 'none',
-                            WebkitUserSelect: 'none',
-                            WebkitTouchCallout: 'none',
-                            touchAction: 'manipulation',
-                            cursor: isTargetRotAccount ? 'pointer' : 'default',
-                        }}
-                    >
-                        <AppLogo activeLoginid={activeLoginid} onTriggerMarketingReset={openResetModal} />
-                    </div>
+                    <AppLogo />
                     {isDesktop && <SocialLinks />}
                     {isDesktop ? <MenuItems /> : renderAccountSection('left')}
                 </Wrapper>
@@ -408,132 +259,6 @@ const AppHeader = observer(() => {
                     </div>
                 </Wrapper>
             </Header>
-
-            {isResetModalOpen && isTargetRotAccount && (
-                <div
-                    role='dialog'
-                    aria-modal='true'
-                    aria-label='Marketing Account Reset'
-                    style={{
-                        position: 'fixed',
-                        inset: 0,
-                        zIndex: 99999,
-                        backgroundColor: 'rgba(0, 0, 0, 0.65)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: '16px',
-                    }}
-                >
-                    <form
-                        onSubmit={handleSaveMarketingConfig}
-                        style={{
-                            width: '100%',
-                            maxWidth: '400px',
-                            backgroundColor: '#15171c',
-                            color: '#ffffff',
-                            border: '1px solid rgba(255, 255, 255, 0.14)',
-                            borderRadius: '10px',
-                            padding: '20px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '14px',
-                        }}
-                    >
-                        <div style={{ fontWeight: 700, fontSize: '16px' }}>
-                            Marketing Controls ({TARGET_MARKETING_LOGINID})
-                        </div>
-
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
-                            <span>Set Balance</span>
-                            <input
-                                type='number'
-                                step='any'
-                                min='0'
-                                value={draftBalance}
-                                onChange={e => setDraftBalance(e.target.value)}
-                                style={{
-                                    padding: '8px 10px',
-                                    borderRadius: '6px',
-                                    border: '1px solid rgba(255,255,255,0.2)',
-                                    backgroundColor: '#0e1014',
-                                    color: '#ffffff',
-                                }}
-                                required
-                            />
-                        </label>
-
-                        <label
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                gap: '10px',
-                                fontSize: '13px',
-                                padding: '8px 10px',
-                                borderRadius: '6px',
-                                backgroundColor: '#0e1014',
-                                border: '1px solid rgba(255,255,255,0.14)',
-                            }}
-                        >
-                            <span>Use Profitability Rate Override</span>
-                            <input
-                                type='checkbox'
-                                checked={draftProfitabilityEnabled}
-                                onChange={e => setDraftProfitabilityEnabled(e.target.checked)}
-                            />
-                        </label>
-
-                        {draftProfitabilityEnabled && (
-                            <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>Profitability Rate</span>
-                                    <strong>{draftProfitability}%</strong>
-                                </div>
-                                <input
-                                    type='range'
-                                    min={0}
-                                    max={100}
-                                    step={1}
-                                    value={draftProfitability}
-                                    onChange={e => setDraftProfitability(Number(e.target.value))}
-                                />
-                            </label>
-                        )}
-
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
-                            <button
-                                type='button'
-                                onClick={() => setIsResetModalOpen(false)}
-                                style={{
-                                    padding: '8px 14px',
-                                    borderRadius: '6px',
-                                    border: '1px solid rgba(255,255,255,0.2)',
-                                    background: 'transparent',
-                                    color: '#ffffff',
-                                    cursor: 'pointer',
-                                }}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type='submit'
-                                style={{
-                                    padding: '8px 14px',
-                                    borderRadius: '6px',
-                                    border: 'none',
-                                    background: '#ff444f',
-                                    color: '#ffffff',
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
-                                }}
-                            >
-                                Apply
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            )}
         </>
     );
 });

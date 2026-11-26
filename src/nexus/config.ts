@@ -12,10 +12,11 @@ export const SUBLINE = 'Automation is the future.';
 export const TAGLINE = env(process.env.NEXT_PUBLIC_TAGLINE, 'The Saint of Automation.'); // line under the name on the splash screen
 
 /** Purple typed greeting shown right after the splash. Set NEXT_PUBLIC_WELCOME_MESSAGE to change it, or to `none` to turn it off. */
-export const WELCOME_MESSAGE = link(process.env.NEXT_PUBLIC_WELCOME_MESSAGE, 'Stay patient, trader. Discipline beats luck every time. Wishing you a blessed session today! 💜');
+export const WELCOME_MESSAGE = link(process.env.NEXT_PUBLIC_WELCOME_MESSAGE, 'This is Prime Trader, the Saint of Automation. Automation is the future... and this, is the future.');
 
 /** Header logo. The header shows only the logo (no name text) unless SHOW_NAME_IN_HEADER is true. */
-export const LOGO_URL = link(process.env.NEXT_PUBLIC_LOGO_URL, '/logo.svg'); // file in /public (swap it for the client's logo); '' = letter badge from APP_NAME
+export const HEADER_TEXT = env(process.env.NEXT_PUBLIC_HEADER_TEXT, ''); // optional small name next to the logo ('' = none: the logo already says Prime Trader)
+export const LOGO_URL = link(process.env.NEXT_PUBLIC_LOGO_URL, '/logo.png'); // file in /public (swap it for the client's logo); '' = letter badge from APP_NAME
 export const SHOW_NAME_IN_HEADER = env(process.env.NEXT_PUBLIC_SHOW_NAME_IN_HEADER, 'false') === 'true';
 
 /** Premium Bots tab: the banner text shown above the bots and the badge on each card. Edit the wording here (or set the env variables). */

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { WELCOME_MESSAGE } from './config';
 import { helloDue } from './hello-key';
+import { say, sayReady } from './voice-say';
 
 const Typer = ({ onDone }: { onDone: () => void }) => {
     const [n, setN] = useState(0);
@@ -10,8 +11,14 @@ const Typer = ({ onDone }: { onDone: () => void }) => {
     const still = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     useEffect(() => {
         if (still) return setN(WELCOME_MESSAGE.length);
-        const t = setInterval(() => setN(x => (x >= WELCOME_MESSAGE.length ? x : x + 1)), 42);
-        return () => clearInterval(t);
+        let t: ReturnType<typeof setInterval> | undefined;
+        // typed at the pace of a man's voice speaking the same line (starts when the voice starts; falls back to typing alone)
+        const type = (ms: number) => { clearInterval(t); t = setInterval(() => setN(x => (x >= WELCOME_MESSAGE.length ? x : x + 1)), ms); };
+        let started = false;
+        const begin = (ms: number) => { if (!started) { started = true; type(ms); } };
+        const stop = sayReady() ? say(WELCOME_MESSAGE, { rate: 0.9, onStart: () => begin(66) }) : () => {};
+        const fallback = setTimeout(() => begin(48), 1200);
+        return () => { clearInterval(t); clearTimeout(fallback); stop(); };
     }, []);
     useEffect(() => {
         if (n < WELCOME_MESSAGE.length) return;

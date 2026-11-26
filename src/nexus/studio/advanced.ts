@@ -80,6 +80,8 @@ const ifElse = (cond: string, thenStack: string, elseStack?: string) =>
 const compare = (op: string, a: string, b: string) => `<block type="logic_compare"><field name="OP">${op}</field><value name="A">${a}</value><value name="B">${b}</value></block>`;
 const arith = (op: string, a: string, b: string) => `<block type="math_arithmetic"><field name="OP">${op}</field><value name="A">${a}</value><value name="B">${b}</value></block>`;
 const notify = (kind: 'success' | 'warn', msg: string) => `<block type="notify"><field name="NOTIFICATION_TYPE">${kind}</field><field name="NOTIFICATION_SOUND">silent</field><value name="MESSAGE">${text(msg)}</value></block>`;
+/** A notification whose text is "<prefix><value><suffix>", e.g. "The Prime strategy worked, printed 12.5 USD." */
+const notifyJoin = (kind: 'success' | 'warn', prefix: string, valueXml: string, suffix: string) => `<block type="notify"><field name="NOTIFICATION_TYPE">${kind}</field><field name="NOTIFICATION_SOUND">silent</field><value name="MESSAGE"><block type="text_join"><mutation items="3"></mutation><value name="ADD0">${text(prefix)}</value><value name="ADD1">${valueXml}</value><value name="ADD2">${text(suffix)}</value></block></value></block>`;
 const switchTrade = (market: string, digit: string, ticks = '') => `<block type="nx_switch_trade"><field name="MARKET">${market}</field><field name="DIGIT">${digit}</field><field name="TICKS">${ticks}</field></block>`;
 const chance = (l: Leg, window: number) => `<block type="nx_digit_chance"><field name="KIND">${CHANCE_KIND[l.side]}</field><field name="DIGIT">${l.barrier ?? 0}</field><field name="COUNT">${window}</field></block>`;
 const digitField = (l: Leg) => (needsBarrier(l.side) ? String(l.barrier ?? 0) : 'null'); // 'null' clears the digit for Even/Odd and Rise/Fall
@@ -142,7 +144,7 @@ export const buildAdvancedXml = (s: AdvSpec): string => {
         ifElse('<block type="contract_check_result"><field name="CHECK_RESULT">win</field></block>', onWin, onLoss),
         ifElse(
             compare('GTE', v.get('total'), num(s.takeProfit)),
-            notify('success', 'Take profit reached. Bot stopped.'),
+            notifyJoin('success', 'The Prime strategy worked, printed ', v.get('total'), ' USD. Bot stopped.'),
             ifElse(
                 compare('LTE', v.get('total'), num(-s.stopLoss)),
                 notify('warn', 'Stop loss reached. Bot stopped.'),
@@ -200,4 +202,4 @@ export const toAdv = (b: BotSpec): AdvSpec => {
 };
 
 /** Builder helpers shared with alpha.ts (the Alpha Digit Switcher bots). */
-export const xmlKit = { Vars, chain, ifElse, compare, arith, notify, switchTrade, chance, num, shadowNum, id, reset: () => { seq = 0; } };
+export const xmlKit = { Vars, chain, ifElse, compare, arith, notify, notifyJoin, switchTrade, chance, num, shadowNum, id, reset: () => { seq = 0; } };

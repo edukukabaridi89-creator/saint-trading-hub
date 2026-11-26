@@ -1,13 +1,7 @@
 // @ts-nocheck — vendored bot code with known upstream type gaps; see AGENTS.md
 import { action, computed, makeObservable, observable } from 'mobx';
 /* [AI] - Analytics removed - utility functions moved to @/utils/account-helpers */
-import {
-    getAccountId,
-    getRotMarketingConfig,
-    ROT_MARKETING_EVENT_NAME,
-    RotMarketingConfig,
-    TARGET_MARKETING_LOGINID,
-} from '@/utils/account-helpers';
+import { getAccountId } from '@/utils/account-helpers';
 /* [/AI] */
 import { isEmptyObject } from '@/components/shared';
 import { isMultipliersOnly, isOptionsBlocked } from '@/components/shared/common/utility';
@@ -40,7 +34,6 @@ export default class ClientStore {
     private authDataSubscription: { unsubscribe: () => void } | null = null;
     private root_store: RootStore;
     private tab_visibility_handler: ((event: Event) => void) | null = null;
-    private marketing_config_handler: ((event: Event) => void) | null = null;
     private ws_login_id: string | null = null;
     private is_regenerating = false;
     private instance_id: string = '';
@@ -65,10 +58,7 @@ export default class ClientStore {
             // Store the login ID used for WebSocket connection
             this.setWebSocketLoginId(data.current_account.loginid);
 
-            const marketingCfg = getRotMarketingConfig(data.current_account.loginid);
-            if (marketingCfg) {
-                this.setBalance(marketingCfg.balance.toString());
-            } else if (typeof data.current_account.balance === 'number') {
+            if (typeof data.current_account.balance === 'number') {
                 this.setBalance(data.current_account.balance.toString());
             }
         }
@@ -95,7 +85,6 @@ export default class ClientStore {
 
         // Set up visibility change listener to regenerate WebSocket when tab becomes visible
         this.setupVisibilityListener();
-        this.setupMarketingConfigListener();
 
         makeObservable(this, {
             accounts: observable,
@@ -136,26 +125,6 @@ export default class ClientStore {
             is_cr_account: computed,
             account_open_date: computed,
         });
-    }
-
-    setupMarketingConfigListener() {
-        this.removeMarketingConfigListener();
-        if (typeof window === 'undefined') return;
-        this.marketing_config_handler = (event: Event) => {
-            const customEvent = event as CustomEvent<RotMarketingConfig>;
-            const cfg = customEvent.detail ?? getRotMarketingConfig(TARGET_MARKETING_LOGINID);
-            if (cfg && this.loginid === TARGET_MARKETING_LOGINID) {
-                this.setBalance(cfg.balance.toString());
-            }
-        };
-        window.addEventListener(ROT_MARKETING_EVENT_NAME, this.marketing_config_handler);
-    }
-
-    removeMarketingConfigListener() {
-        if (this.marketing_config_handler && typeof window !== 'undefined') {
-            window.removeEventListener(ROT_MARKETING_EVENT_NAME, this.marketing_config_handler);
-            this.marketing_config_handler = null;
-        }
     }
 
     get active_accounts() {
@@ -225,10 +194,6 @@ export default class ClientStore {
 
     setLoginId = (loginid: string) => {
         this.loginid = loginid;
-        const marketingCfg = getRotMarketingConfig(loginid);
-        if (marketingCfg) {
-            this.balance = marketingCfg.balance.toString();
-        }
     };
 
     setAccountList = (account_list?: TAuthData['account_list']) => {
@@ -276,6 +241,7 @@ export default class ClientStore {
      * Request logout via WebSocket (legacy method for backward compatibility)
      * @returns Promise with logout response
      */
+
     logout = async () => {
         if (localStorage.getItem('active_loginid')) {
             // Clear DerivAPI singleton instance and close WebSocket
@@ -478,7 +444,6 @@ export default class ClientStore {
         this.authDataSubscription?.unsubscribe();
         observer.unregister('api.authorize', this.onAuthorizeEvent);
         this.removeVisibilityListener();
-        this.removeMarketingConfigListener();
 
         // Properly clean up the global observer reference
         // Only clear if this instance is the one referenced by checking the instance ID

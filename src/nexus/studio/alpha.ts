@@ -9,7 +9,7 @@
  */
 import { xmlKit } from './advanced';
 
-const { Vars, chain, ifElse, compare, arith, notify, switchTrade, chance, num, shadowNum, id, reset } = xmlKit;
+const { Vars, chain, ifElse, compare, arith, notify, notifyJoin, switchTrade, chance, num, shadowNum, id, reset } = xmlKit;
 
 export type AlphaKind = 1 | 2 | 3;
 type Side = 'DIGITEVEN' | 'DIGITODD' | 'DIGITOVER' | 'DIGITUNDER';
@@ -64,7 +64,7 @@ export const buildAlphaXml = (kind: AlphaKind): string => {
         alternate,
         ifElse(
             compare('GTE', v.get('Total'), v.get('Take Profit')),
-            notify('success', 'Take profit reached. Bot stopped.'),
+            notifyJoin('success', 'The Prime strategy worked, printed ', v.get('Total'), ' USD. Bot stopped.'),
             ifElse(compare('LTE', v.get('Total'), arith('MINUS', num(0), v.get('Stop Loss'))), notify('warn', 'Stop loss reached. Bot stopped.'), '<block type="trade_again"></block>')
         ),
     ]);

@@ -6,12 +6,15 @@ import { useDevice } from '@deriv-com/ui';
 import { useStore } from '@/hooks/useStore';
 import { useAutoEngine } from './auto-engine';
 import { useAlphaEngine } from './alpha-strike';
+import { useEORapidEngine } from './eo-rapid';
+import { useRapidEngine } from './rapid';
 import { useMatchesEngine } from './matches-pro';
 import { APP_NAME, PAGE_TITLE } from './config';
 import { DemoLimitPopup } from './demo-limit-popup';
 import { GreetingPopup } from './greeting';
 import { startGuard } from './guard';
-import { MiniCirclesPanel } from './mini-circles';
+import { builderSymbol, MiniCirclesPanel, setBuilderSymbol } from './mini-circles';
+import { SYMBOLS } from './config';
 import { nexus } from './store';
 import './nexus.scss';
 
@@ -57,6 +60,21 @@ export const NexusMount = observer(() => {
     useAutoEngine();
     useMatchesEngine();
     useAlphaEngine();
+    useRapidEngine();
+    useEORapidEngine();
+    // The market chosen in DCircles (or any Saint page) and the Market block of the Bot Builder always follow each other.
+    useEffect(() => {
+        const ids = SYMBOLS.map(s => s.id);
+        let last = '';
+        const t = setInterval(() => {
+            const cur = builderSymbol();
+            if (!cur || !ids.includes(cur)) return; // Bot Builder not loaded yet
+            if (!last) { last = cur; nexus.setSymbol(cur); return; }
+            if (cur !== last) { last = cur; nexus.setSymbol(cur); } // changed in the Bot Builder -> pages follow
+            else if (nexus.symbol !== last && ids.includes(nexus.symbol) && setBuilderSymbol(nexus.symbol)) last = nexus.symbol; // changed on a page -> Bot Builder follows
+        }, 500);
+        return () => clearInterval(t);
+    }, []);
     useEffect(() => {
         document.title = PAGE_TITLE;
         nexus.bindBlockly();

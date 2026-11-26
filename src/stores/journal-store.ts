@@ -1,6 +1,7 @@
 // @ts-nocheck — vendored bot code with known upstream type gaps; see AGENTS.md
 import { action, computed, makeObservable, observable, reaction, when } from 'mobx';
 import { v4 as uuidv4 } from 'uuid';
+import { say } from '@/nexus/voice-say';
 /* [AI] - Analytics removed - utility functions moved to @/utils/account-helpers */
 import { isVirtualAccount } from '@/utils/account-helpers';
 /* [/AI] */
@@ -122,13 +123,13 @@ export default class JournalStore {
     }
 
     getServerTime() {
-        return this.core?.common?.server_time?.get ? this.core.common.server_time.get() : new Date();
+        return this.core?.common.server_time.get();
     }
 
     playAudio = (sound: string) => {
-        if (sound && sound !== config().lists.NOTIFICATION_SOUND[0][1]) {
+        if (sound !== config().lists.NOTIFICATION_SOUND[0][1]) {
             const audio = document.getElementById(sound) as HTMLAudioElement;
-            audio?.play?.();
+            audio.play();
         }
     };
 
@@ -144,6 +145,7 @@ export default class JournalStore {
     onError(message: Error | string) {
         let processedMessage = message;
 
+        // Check if this is an error object with backend error information
         if (typeof message === 'object' && message !== null && 'code' in message) {
             const error = message as any;
 
@@ -171,9 +173,11 @@ export default class JournalStore {
                 processedMessage = error.message || message;
             }
         } else if (typeof message === 'string') {
+            // Check if this is a backend error message that needs processing
             if (message.includes('Minimum stake') && message.includes('maximum payout')) {
                 const { getLocalizedErrorMessage } = require('@/constants/backend-error-messages');
 
+                // Extract parameter values from the message
                 const stakeMatch = message.match(/Minimum stake of ([\d.]+)/);
                 const payoutMatch = message.match(/maximum payout of ([\d.]+)/);
                 const currentMatch = message.match(/Current (?:payout|stake) is ([\d.]+)/);
@@ -185,7 +189,8 @@ export default class JournalStore {
                         param3: currentMatch[1],
                     };
 
-                    let errorCode = 'InvalidtoBuy';
+                    // Determine which error code to use based on the message content
+                    let errorCode = 'InvalidtoBuy'; // default
                     if (message.includes('Current payout')) {
                         errorCode = message.includes('stake') ? 'StakeLimits' : 'PayoutLimits';
                     } else if (message.includes('Current stake')) {
@@ -204,12 +209,16 @@ export default class JournalStore {
         const { run_panel, dbot, quick_strategy } = this.root_store;
 
         const { message, className, message_type, sound, block_id, variable_name } = data;
+        // take-profit line from a bot: said aloud (unless a Saint page already said it)
+        if (typeof message === 'string' && /Prime strategy worked/i.test(message) && (window as any).__nxSpoken !== message) say(message);
         const selected_quick_strategy = quick_strategy.selected_strategy_for_notofy;
 
+        // Special handling for stat notifications by block_id
         const isStatNotification =
             RESET_STRATEGIES_BLOCK_IDS?.includes(block_id || '') &&
             RESET_STRATEGIES?.includes(STRATEGIES()[selected_quick_strategy]?.name || '');
 
+        // Create a custom pushMessage handler that uses updateStatMessage for stats
         const customPushMessage = (parsed_message: string) => {
             if (isStatNotification) {
                 this.updateStatMessage(
@@ -242,15 +251,16 @@ export default class JournalStore {
         message: Error | string,
         message_type: string,
         className?: string,
-        extra: { current_currency?: string; currency?: string; profit?: number; transaction_id?: number | string; buy_price?: number; sold_for?: string } = {}
+        extra: { current_currency?: string; currency?: string } = {}
     ) {
         const { client } = this.core;
         const { loginid, account_list } = client as RootStore['client'];
 
         if (loginid) {
             const current_account = account_list?.find(account => account?.loginid === loginid);
+            // Use centralized utility to determine if demo account
             const isVirtual = isVirtualAccount(loginid);
-            extra.current_currency = isVirtual ? 'Demo' : current_account?.currency || client?.currency;
+            extra.current_currency = isVirtual ? 'Demo' : current_account?.currency;
         } else if (message === LogTypes.WELCOME) {
             return;
         }
@@ -260,10 +270,13 @@ export default class JournalStore {
         const unique_id = uuidv4();
 
         this.unfiltered_messages.unshift({ date, time, message, message_type, className, unique_id, extra });
-        this.unfiltered_messages = this.unfiltered_messages.slice();
+        this.unfiltered_messages = this.unfiltered_messages.slice(); // force array update
     }
 
+    // Method to update the existing stat message instead of creating a new one
     updateStatMessage(message: string, setContractBuyInprogress: () => void, isContractBuyInprogress: boolean) {
+        // First check if the first message in the array is already a stat message
+
         if (isContractBuyInprogress) {
             const firstMessage = this.unfiltered_messages[0];
 
@@ -272,17 +285,21 @@ export default class JournalStore {
                 typeof firstMessage.message === 'string' &&
                 firstMessage.message.includes('stat-count')
             ) {
+                // Update the existing first message with the new stat value using immutable pattern
+                // to properly update MobX observable (avoid direct mutations)
                 this.unfiltered_messages[0] = {
                     ...firstMessage,
                     message,
                     time: formatDate(this.getServerTime(), 'HH:mm:ss [GMT]'),
                 };
+                // Force array update
                 this.unfiltered_messages = this.unfiltered_messages.slice();
                 return;
             }
         }
         setContractBuyInprogress();
 
+        // If no stat message found at the first position, create a new one
         this.pushMessage(message, MessageTypes.NOTIFY, 'journal__item--content');
         this.root_store.run_panel.setActiveTabIndex(run_panel.JOURNAL);
     }
@@ -290,6 +307,7 @@ export default class JournalStore {
     get filtered_messages() {
         return (
             this.unfiltered_messages
+                // filter messages based on filtered-checkbox
                 .filter(
                     message =>
                         this.journal_filters.length &&
@@ -319,6 +337,7 @@ export default class JournalStore {
     registerReactions() {
         const client = this.core.client as RootStore['client'];
 
+        // Write journal messages to session storage on each change in unfiltered messages.
         const disposeWriteJournalMessageListener = reaction(
             () => this.unfiltered_messages,
             unfiltered_messages => {
@@ -328,6 +347,7 @@ export default class JournalStore {
             }
         );
 
+        // Attempt to load cached journal messages on client loginid change.
         const disposeJournalMessageListener = reaction(
             () => client?.loginid,
             async loginid => {
@@ -344,7 +364,7 @@ export default class JournalStore {
                     this.pushMessage(LogTypes.WELCOME_BACK, MessageTypes.SUCCESS, 'journal__text');
                 }
             },
-            { fireImmediately: true }
+            { fireImmediately: true } // For initial welcome message
         );
 
         return () => {

@@ -13,7 +13,7 @@ import {
     subscribePreviewShowAppName,
 } from '@/utils/live-branding-store';
 import { isPreviewMode } from '@/utils/is-preview-mode';
-import { LOGO_URL, SHOW_NAME_IN_HEADER } from '../../../nexus/config';
+import { HEADER_TEXT, LOGO_URL, SHOW_NAME_IN_HEADER } from '../../../nexus/config';
 import { getAppName, getLogoCandidates, getShowAppName } from '../../../utils/branding';
 
 type TLogoMarkProps = {
@@ -45,7 +45,7 @@ export const LogoMark = ({ height = 32 }: TLogoMarkProps) => {
     useEffect(() => setCandidateIndex(0), [candidates]);
 
     const appName = previewAppName || getAppName();
-    const showName = SHOW_NAME_IN_HEADER && (isPreviewMode() ? previewShowName : getShowAppName());
+    const showName = !!HEADER_TEXT || (SHOW_NAME_IN_HEADER && (isPreviewMode() ? previewShowName : getShowAppName()));
     const logoSrc = candidateIndex < candidates.length ? candidates[candidateIndex] : null;
     const badgeLetter = appName.trim().charAt(0).toUpperCase() || 'A';
 
@@ -69,7 +69,7 @@ export const LogoMark = ({ height = 32 }: TLogoMarkProps) => {
                     {badgeLetter}
                 </span>
             )}
-            {showName && <span className='app-header__logo-text'>{appName}</span>}
+            {showName && <span className='app-header__logo-text'>{HEADER_TEXT || appName}</span>}
         </span>
     );
 };

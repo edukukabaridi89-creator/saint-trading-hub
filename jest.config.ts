@@ -104,6 +104,7 @@ const config: Config = {
         '^@/hooks/(.*)$': '<rootDir>/src/hooks/$1',
         '^@/stores/(.*)$': '<rootDir>/src/stores/$1',
         '^@/pages/(.*)$': '<rootDir>/src/pages/$1',
+        '^@/nexus/(.*)$': '<rootDir>/src/nexus/$1',
         '^@/services/(.*)$': '<rootDir>/src/services/$1',
         // `@/` is mapped one directory at a time here, with no catch-all.
         '^@/translations$': '<rootDir>/src/translations',

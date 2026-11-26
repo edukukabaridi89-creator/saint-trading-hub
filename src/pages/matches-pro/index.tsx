@@ -6,17 +6,28 @@ import { mp, placeRound, refreshPicks, roundStake } from '@/nexus/matches-pro';
 import { hub } from '@/nexus/ticks-hub';
 import { DigitCircles, Field, Num, Panel } from '@/nexus/ui';
 import { runInAction } from 'mobx';
+import { useState } from 'react';
+import { RapidMatches } from './rapid';
 
 export const MatchesPro = observer(() => {
+    const [mode, setMode] = useState<'rapid' | 'spread'>('rapid');
     useEffect(() => { hub.watch([mp.symbol]); refreshPicks(); const t = setInterval(refreshPicks, 1000); return () => clearInterval(t); }, [mp.symbol, mp.n, mp.count]);
     const ready = mp.picks.length >= mp.count;
     const total = Math.round(roundStake() * mp.count * 100) / 100;
     const f = hub.feed(mp.symbol);
     const need = mp.n * 2;
     const loaded = (f?.digits.length ?? 0) >= need;
+    const tabs = (
+        <div className='nx-seg' style={{ margin: '0 0 12px' }}>
+            <button className={mode === 'rapid' ? 'on' : ''} onClick={() => setMode('rapid')}>Rapid</button>
+            <button className={mode === 'spread' ? 'on' : ''} onClick={() => setMode('spread')}>Several digits</button>
+        </div>
+    );
+    if (mode === 'rapid') return <><div style={{ padding: '0 12px' }}>{tabs}</div><RapidMatches /></>;
     return (
         <div className='nx-split'>
             <Panel title='Matches Pro'>
+                {tabs}
                 <Field label='Market'>
                     <select className='nx-input' value={mp.symbol} onChange={e => runInAction(() => { mp.symbol = e.target.value; mp.picks = []; hub.watch([e.target.value]); })}>
                         {SYMBOLS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -34,9 +45,9 @@ export const MatchesPro = observer(() => {
                 </div>
                 <div className='nx-row'>
                     <Field label='Duration (ticks)'><Num int min={1} max={10} value={mp.ticks} onChange={v => (mp.ticks = v)} /></Field>
-                    <Field label='Look at the last'>
+                    <Field label='Digits that rose in the last'>
                         <select className='nx-input' value={mp.n} onChange={e => (mp.n = Number(e.target.value))}>
-                            <option value={5}>5 ticks</option><option value={10}>10 ticks</option><option value={15}>15 ticks</option><option value={20}>20 ticks</option>
+                            <option value={3}>3 ticks</option><option value={5}>5 ticks</option><option value={8}>8 ticks</option><option value={10}>10 ticks</option><option value={15}>15 ticks</option>
                         </select>
                     </Field>
                 </div>
@@ -54,7 +65,7 @@ export const MatchesPro = observer(() => {
                         <Field label='Max steps'><Num int min={1} max={8} value={mp.mg.max} onChange={v => (mp.mg.max = v)} /></Field>
                     </div>
                 )}
-                <p className='nx-muted nx-note'>Each round buys {mp.count} Matches contract{mp.count === 1 ? '' : 's'} at the same moment, {total.toFixed(2)} in total. At most one can win. A win pays several times one stake, so it covers the cost of the round plus part of earlier losses, but most rounds still lose.</p>
+                <p className='nx-muted nx-note'>Each round buys {mp.count} Matches contract{mp.count === 1 ? '' : 's'} at the same moment, each at the same price ({total.toFixed(2)} in total). At most one can win. A win pays several times one stake, so it covers the cost of the round plus part of earlier losses, but most rounds still lose.</p>
                 {mp.auto ? (
                     <button className={`nx-btn ${mp.running ? 'nx-btn--stop' : 'nx-btn--hedge'}`} disabled={!loaded && !mp.running} onClick={() => runInAction(() => (mp.running = !mp.running))}>
                         {mp.running ? 'STOP' : 'START AUTOMATIC'}
@@ -70,8 +81,8 @@ export const MatchesPro = observer(() => {
                     {!loaded
                         ? 'Collecting ticks for this market, one moment…'
                         : ready
-                            ? `Rising digits (last {mp.n} ticks vs the {mp.n} before): ${mp.picks.join(', ')}${mp.auto ? (mp.running ? ' — placing the round.' : ' — press Start to trade them automatically.') : ' — press Trade now.'}`
-                            : `Waiting for ${mp.count} digits whose percentage is rising (found ${mp.picks.length}).`}
+                            ? `Digits that rose in the last ${mp.n} ticks: ${mp.picks.join(', ')}${mp.auto ? (mp.running ? ' — placing the round.' : ' — press Start to trade them automatically.') : ' — press Trade now.'}`
+                            : `Waiting for ${mp.count} digits that rose (found ${mp.picks.length}).`}
                 </div>
                 <Panel title={`Market: ${symbolName(mp.symbol)}`}>
                     <DigitCircles symbol={mp.symbol} marks={mp.picks.slice(0, mp.count)} />
@@ -84,7 +95,7 @@ export const MatchesPro = observer(() => {
                         <span>P/L <b>{mp.pnl.toFixed(2)}</b></span>
                     </div>
                     {mp.last && <p className='nx-muted'>Last round: {mp.last}</p>}
-                    <p className='nx-muted nx-note'>Rising digits are those that appeared more in the last {mp.n} ticks than in the {mp.n} ticks before. Watch the hit rate over many rounds before trusting the pattern; a short winning streak proves nothing.</p>
+                    <p className='nx-muted nx-note'>A digit "rises" when it lands and its share of the last 1,000 ticks goes up. Watch the hit rate over many rounds before trusting the pattern; a short winning streak proves nothing.</p>
                 </Panel>
             </div>
         </div>

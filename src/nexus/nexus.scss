@@ -269,7 +269,7 @@ html, body { max-width: 100vw; overflow-x: hidden; }
 /* Entry screen (shown after the splash to visitors who are not logged in) */
 .nx-gate { position: fixed; inset: 0; z-index: 20000; display: grid; place-items: center; padding: 20px; background: radial-gradient(circle at 50% 35%, var(--nx-splash-from, #161a45), var(--nx-splash-to, #05060f) 75%); color: #e8ecff; overflow: auto; }
 .nx-gate__card { width: min(100%, 380px); display: flex; flex-direction: column; align-items: stretch; gap: 12px; text-align: center; h2 { margin: 6px 0 0; font-size: 30px; letter-spacing: 0.06em; background: linear-gradient(90deg, var(--nx-glow-a, #4de2ff), #fff, var(--nx-glow-b, #b04dff)); -webkit-background-clip: text; color: transparent; } }
-.nx-gate__logo { width: 72px; height: 72px; margin: 0 auto; border-radius: 18px; object-fit: contain; }
+.nx-gate__logo { width: auto; max-width: 240px; height: 64px; margin: 0 auto; padding: 6px 10px; border-radius: 14px; background: #fff; object-fit: contain; }
 .nx-gate__tag { margin: -4px 0 10px; font-size: 14px; opacity: 0.8; }
 .nx-gate__btn { height: 48px; border-radius: 14px; border: 1.5px solid rgba(255, 255, 255, 0.35); background: rgba(255, 255, 255, 0.06); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; &:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); } &:disabled { opacity: 0.6; }
     &--main { border-color: transparent; background: var(--nx-accent, #7c5cff); } &--alt { border-color: var(--nx-glow-b, #ffb454); color: var(--nx-glow-b, #ffb454); } }
@@ -335,3 +335,9 @@ html, body { max-width: 100vw; overflow-x: hidden; }
 .nx-as { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.2rem;
     &__side { padding: 1rem 1.2rem; border-radius: 10px; border: 1px solid var(--nx-border); display: flex; flex-direction: column; gap: .3rem; b { font-size: 1.6rem; } span { font-size: 1.3rem; opacity: .8; } em { font-style: normal; font-size: 1.2rem; &.up { color: #1fb77a; } &.dn { color: #e5484d; } } &.is-best { border-color: #7c5cff; box-shadow: 0 0 0 2px rgba(124,92,255,.35); } }
     &__bar { height: .6rem; border-radius: 99px; background: var(--nx-border); overflow: hidden; i { display: block; height: 100%; background: #7c5cff; } } }
+
+/* Powered by deriv (lowercase, bold, red) */
+.nx-powered { display: inline-flex; align-items: baseline; gap: 5px; font-size: 12px; opacity: 0.95; margin-right: auto; padding-left: 12px; white-space: nowrap; }
+.nx-powered b { color: #ff444f; font-weight: 800; font-size: 15px; letter-spacing: -0.03em; text-transform: lowercase; }
+.nx-splash__text .nx-powered { margin: 10px auto 0; padding-left: 0; justify-content: center; display: flex; }
+.nx-gate__card .nx-powered { margin: 8px auto 0; padding-left: 0; justify-content: center; }

@@ -18,12 +18,6 @@ type TElement = {
     [key: string]: TTransaction[];
 };
 
-const formatContractTimestamp = (value: unknown) => {
-    if (!value) return value;
-    if (typeof value === 'string' && value.includes('[GMT]')) return value;
-    return formatDate(value, 'YYYY-M-D HH:mm:ss [GMT]');
-};
-
 export default class TransactionsStore {
     root_store: RootStore;
     core: TStores;
@@ -119,27 +113,18 @@ export default class TransactionsStore {
     pushTransaction(data: TContractInfo) {
         const is_completed = isEnded(data as ProposalOpenContract);
         const { run_id } = this.root_store.run_panel;
-        const current_account = (data as any)?.accountID || (this.core?.client?.loginid as string);
-
-        const resolvedEntrySpot = data.entry_spot ?? (data as any).entry_tick;
-        const resolvedExitSpot = (data as any).exit_spot || data.exit_tick;
-        const resolvedProfit = is_completed
-            ? Number(data.profit ?? Number(data.sell_price ?? 0) - Number(data.buy_price ?? 0))
-            : 0;
+        const current_account = this.core?.client?.loginid as string;
 
         const contract: TContractInfo = {
             ...data,
-            contract_id: data.contract_id,
             is_completed,
             run_id,
-            date_start: formatContractTimestamp(data.date_start),
-            entry_spot: resolvedEntrySpot,
-            entry_tick: resolvedEntrySpot,
-            entry_tick_time: data.entry_tick_time && formatContractTimestamp(data.entry_tick_time),
-            exit_spot: is_completed ? resolvedExitSpot : undefined,
-            exit_tick: is_completed ? resolvedExitSpot : undefined,
-            exit_tick_time: data.exit_tick_time && formatContractTimestamp(data.exit_tick_time),
-            profit: resolvedProfit,
+            date_start: formatDate(data.date_start, 'YYYY-M-D HH:mm:ss [GMT]'),
+            entry_tick: data.entry_spot,
+            entry_tick_time: data.entry_tick_time && formatDate(data.entry_tick_time, 'YYYY-M-D HH:mm:ss [GMT]'),
+            exit_tick: (data as any).exit_spot || data.exit_tick,
+            exit_tick_time: data.exit_tick_time && formatDate(data.exit_tick_time, 'YYYY-M-D HH:mm:ss [GMT]'),
+            profit: is_completed ? data.profit : 0,
         };
 
         if (!this.elements[current_account]) {
@@ -153,14 +138,13 @@ export default class TransactionsStore {
             if (typeof c.data === 'string') return false;
             return (
                 c.type === transaction_elements.CONTRACT &&
-                ((c.data?.transaction_ids?.buy &&
-                    data.transaction_ids?.buy &&
-                    c.data.transaction_ids.buy === data.transaction_ids?.buy) ||
-                    (c.data?.contract_id && data.contract_id && c.data.contract_id === data.contract_id))
+                c.data?.transaction_ids &&
+                c.data.transaction_ids.buy === data.transaction_ids?.buy
             );
         });
 
         if (same_contract_index === -1) {
+            // Render a divider if the "run_id" for this contract is different.
             if (this.elements[current_account]?.length > 0) {
                 const temp_contract = this.elements[current_account]?.[0];
                 const is_contract = temp_contract.type === transaction_elements.CONTRACT;
@@ -182,6 +166,7 @@ export default class TransactionsStore {
                 data: contract,
             });
         } else {
+            // If data belongs to existing contract in memory, update it.
             this.elements[current_account]?.splice(same_contract_index, 1, {
                 type: transaction_elements.CONTRACT,
                 data: contract,
@@ -203,6 +188,7 @@ export default class TransactionsStore {
     registerReactions() {
         const { client } = this.core;
 
+        // Write transactions to session storage on each change in transaction elements.
         const disposeTransactionElementsListener = reaction(
             () => this.elements[client?.loginid as string],
             elements => {
@@ -212,6 +198,9 @@ export default class TransactionsStore {
             }
         );
 
+        // User could've left the page mid-contract. On initial load, try
+        // to recover any pending contracts so we can reflect accurate stats
+        // and transactions.
         const disposeRecoverContracts = reaction(
             () => this.transactions.length,
             () => this.recoverPendingContracts()
@@ -272,6 +261,8 @@ export default class TransactionsStore {
     }
 
     async recoverPendingContractsById(contract_id: number, contract: ProposalOpenContract | null = null) {
+        // TODO: need to fix as the portfolio is not available now
+        // const positions = this.core.portfolio.positions;
         const positions: unknown[] = [];
 
         if (contract) {

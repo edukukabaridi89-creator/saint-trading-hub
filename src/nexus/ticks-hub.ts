@@ -3,7 +3,7 @@ import { LEGACY_WS_URL, SYMBOLS } from './config';
 
 type Listener = () => void;
 type TickFn = (symbol: string, seq: number) => void;
-type Feed = { digits: number[]; prices: number[]; pip: number; last: number | null; seq: number; rev: number };
+type Feed = { digits: number[]; prices: number[]; pip: number; last: number | null; seq: number; rev: number; outs: (number | undefined)[] };
 
 /** Pip size can arrive as decimal places (2) or as a step (0.01); fall back to the longest decimal seen. */
 const pipOf = (raw: unknown, prices: number[]) => {
@@ -88,7 +88,7 @@ class TicksHub {
             const prices: number[] = (m.history.prices ?? []).map(Number);
             if (!sym || !prices.length) return;
             const pip = pipOf(m.pip_size, prices);
-            this.feeds[sym] = { pip, prices, digits: prices.map(p => digitOf(p, pip)), last: prices.at(-1) ?? null, seq: 0, rev: (this.feeds[sym]?.rev ?? 0) + 1 };
+            this.feeds[sym] = { pip, prices, digits: prices.map(p => digitOf(p, pip)), last: prices.at(-1) ?? null, seq: 0, rev: (this.feeds[sym]?.rev ?? 0) + 1, outs: [] };
             this.status = 'Live';
             touched = sym;
         } else if (m.tick) {
@@ -99,7 +99,12 @@ class TicksHub {
             if (m.tick.pip_size !== undefined) f.pip = pipOf(m.tick.pip_size, f.prices);
             f.prices.push(q);
             f.digits.push(digitOf(q, f.pip));
-            if (f.prices.length > 1000) (f.prices.shift(), f.digits.shift());
+            // `outs` remembers, for the latest ticks, the digit that left the 1,000-tick window as each tick arrived.
+            // A digit "rose" on a tick when the digit that left is a different one (its share went up).
+            let out: number | undefined;
+            if (f.prices.length > 1000) (f.prices.shift(), (out = f.digits.shift()));
+            f.outs.push(out);
+            if (f.outs.length > 60) f.outs.shift();
             f.last = q;
             f.seq++;
             f.rev++;

@@ -54,6 +54,8 @@ import {
     RiskCalculatorPage,
     MatchesProPage,
     AlphaStrikePage,
+    EvenOddRapidPage,
+    BasicBotPage,
     HedgeHub,
     Signals,
     ManualTrader,
@@ -117,6 +119,8 @@ const AppWrapper = observer(() => {
         'risk_calc',
         'matches_pro',
         'alpha_strike',
+        'eo_rapid',
+        'basic_bot',
     ];
     const { isDesktop } = useDevice();
     const location = useLocation();
@@ -530,6 +534,16 @@ const AppWrapper = observer(() => {
                             <div label={<Localize i18n_default_text='Alpha Strike' />} id='id-alpha-strike'>
                                 <NexusPage>
                                     <AlphaStrikePage />
+                                </NexusPage>
+                            </div>
+                            <div label={<Localize i18n_default_text='Even/Odd Rapid' />} id='id-eo-rapid'>
+                                <NexusPage>
+                                    <EvenOddRapidPage />
+                                </NexusPage>
+                            </div>
+                            <div label={<Localize i18n_default_text='Basic Bot' />} id='id-basic-bot'>
+                                <NexusPage>
+                                    <BasicBotPage />
                                 </NexusPage>
                             </div>
                         </Tabs>
