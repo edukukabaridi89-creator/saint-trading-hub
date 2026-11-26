@@ -4,17 +4,13 @@ import { scanKindOf, type Cond, type Metric, type Plan, type Scan, type Stage } 
 
 /** Bot Builder XML for a Plan. Every decision the bot takes also writes a line to the Journal. */
 
-const { Vars, chain, ifElse, compare, arith, notifyJoin, switchTrade, chance, num, shadowNum, id, reset } = xmlKit;
+const { joinNotify, Vars, chain, ifElse, compare, arith, notifyJoin, switchTrade, chance, num, shadowNum, id, reset } = xmlKit;
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const textShadow = (t: string) => `<shadow type="text"><field name="TEXT">${esc(t)}</field></shadow>`;
 const textBlock = (t: string) => `<block type="text"><field name="TEXT">${esc(t)}</field></block>`;
 
 type Part = string | { v: string };
-/** A Journal line made of fixed words and live values: say('info', ['Stake now ', {v: stake}, ' USD']). */
-const say = (kind: 'success' | 'info' | 'warn', parts: Part[]) => {
-    const items = parts.map((p, i) => `<value name="ADD${i}">${typeof p === 'string' ? textShadow(p) : p.v}</value>`).join('');
-    return `<block type="notify"><field name="NOTIFICATION_TYPE">${kind}</field><field name="NOTIFICATION_SOUND">silent</field><value name="MESSAGE"><block type="text_join"><mutation items="${parts.length}"></mutation>${items}</block></value></block>`;
-};
+const say = (kind: 'success' | 'info' | 'warn', parts: Part[]) => joinNotify(kind, parts);
 
 const scanBlock = (sc: Scan, c: Choice) => {
     const k = scanKindOf(c)!;

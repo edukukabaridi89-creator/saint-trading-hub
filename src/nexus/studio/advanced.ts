@@ -63,6 +63,7 @@ const text = (t: string) => `<shadow type="text"><field name="TEXT">${esc(t)}</f
 
 class Vars {
     private ids = new Map<string, string>();
+    constructor() { this.id('Message'); } // always first, so its id is the fixed MESSAGE_ID the Journal helpers use
     id(name: string) { if (!this.ids.has(name)) this.ids.set(name, `v_${name.replace(/\W/g, '_')}_${this.ids.size}`); return this.ids.get(name)!; }
     get(name: string) { return `<block type="variables_get"><field name="VAR" id="${this.id(name)}" variabletype="">${name}</field></block>`; }
     set(name: string, value: string, next = '') { return `<block type="variables_set"><field name="VAR" id="${this.id(name)}" variabletype="">${name}</field><value name="VALUE">${value}</value>${next ? `<next>${next}</next>` : ''}</block>`; }
@@ -70,18 +71,42 @@ class Vars {
     declarations() { return `<variables>${[...this.ids].map(([n, i]) => `<variable type="" id="${i}" islocal="false" iscloud="false">${n}</variable>`).join('')}</variables>`; }
 }
 
-/** Chains statement blocks (each already a complete `<block>` without <next>) into one stack. */
+/** Splits a string of sibling statement blocks (`<block>..</block><block>..</block>`) into its top-level blocks. */
+const topBlocks = (xml: string): string[] => {
+    const out: string[] = [];
+    const re = /<(\/?)block\b[^>]*>/g;
+    let depth = 0, start = 0, m: RegExpExecArray | null;
+    while ((m = re.exec(xml))) {
+        if (!m[1]) { if (depth === 0) start = m.index; depth++; }
+        else if (--depth === 0) out.push(xml.slice(start, m.index + m[0].length));
+    }
+    return out;
+};
+/** Chains statement blocks (each a complete `<block>`, or several siblings) into one stack. */
 const chain = (blocks: string[]): string => {
-    const list = blocks.filter(Boolean);
+    const list = blocks.filter(Boolean).flatMap(topBlocks);
     return list.reduceRight((tail, b) => (tail ? b.replace(/<\/block>$/, `<next>${tail}</next></block>`) : b), '');
 };
-const ifElse = (cond: string, thenStack: string, elseStack?: string) =>
-    `<block type="controls_if">${elseStack !== undefined ? '<mutation else="1"></mutation>' : ''}<value name="IF0">${cond}</value><statement name="DO0">${thenStack}</statement>${elseStack !== undefined ? `<statement name="ELSE">${elseStack}</statement>` : ''}</block>`;
+const ifElse = (cond: string, thenStack: string, elseStack?: string) => {
+    const t = chain([thenStack]), e = elseStack !== undefined ? chain([elseStack]) : undefined;
+    return `<block type="controls_if">${e !== undefined ? '<mutation else="1"></mutation>' : ''}<value name="IF0">${cond}</value><statement name="DO0">${t}</statement>${e !== undefined ? `<statement name="ELSE">${e}</statement>` : ''}</block>`;
+};
 const compare = (op: string, a: string, b: string) => `<block type="logic_compare"><field name="OP">${op}</field><value name="A">${a}</value><value name="B">${b}</value></block>`;
 const arith = (op: string, a: string, b: string) => `<block type="math_arithmetic"><field name="OP">${op}</field><value name="A">${a}</value><value name="B">${b}</value></block>`;
 const notify = (kind: 'success' | 'warn', msg: string) => `<block type="notify"><field name="NOTIFICATION_TYPE">${kind}</field><field name="NOTIFICATION_SOUND">silent</field><value name="MESSAGE">${text(msg)}</value></block>`;
+const MESSAGE_ID = 'v_Message_0';
+/**
+ * A Journal line made of fixed words and live values. Bot Builder's "text join" is a statement block that fills a variable
+ * ("set Message to create text with ..."), so this returns two blocks in a row: the join, then a notify that reads the variable.
+ */
+const joinNotify = (kind: 'success' | 'info' | 'warn', parts: (string | { v: string })[]): string => {
+    const items = parts.map(p => (typeof p === 'string' ? `<block type="text_statement"><value name="TEXT">${text(p)}</value></block>` : `<block type="text_statement"><value name="TEXT"><shadow type="text"><field name="TEXT"></field></shadow>${p.v}</value></block>`));
+    const stack = items.reduceRight((tail, b) => (tail ? b.replace(/<\/block>$/, `<next>${tail}</next></block>`) : b), '');
+    const get = `<block type="variables_get"><field name="VAR" id="${MESSAGE_ID}" variabletype="">Message</field></block>`;
+    return `<block type="text_join"><field name="VARIABLE" id="${MESSAGE_ID}" variabletype="">Message</field><statement name="STACK">${stack}</statement><next><block type="notify"><field name="NOTIFICATION_TYPE">${kind}</field><field name="NOTIFICATION_SOUND">silent</field><value name="MESSAGE">${text('')}${get}</value></block></next></block>`;
+};
 /** A notification whose text is "<prefix><value><suffix>", e.g. "The Prime strategy worked, printed 12.5 USD." */
-const notifyJoin = (kind: 'success' | 'warn', prefix: string, valueXml: string, suffix: string) => `<block type="notify"><field name="NOTIFICATION_TYPE">${kind}</field><field name="NOTIFICATION_SOUND">silent</field><value name="MESSAGE"><block type="text_join"><mutation items="3"></mutation><value name="ADD0">${text(prefix)}</value><value name="ADD1">${valueXml}</value><value name="ADD2">${text(suffix)}</value></block></value></block>`;
+const notifyJoin = (kind: 'success' | 'warn', prefix: string, valueXml: string, suffix: string) => joinNotify(kind, [prefix, { v: valueXml }, suffix]);
 const switchTrade = (market: string, digit: string, ticks = '') => `<block type="nx_switch_trade"><field name="MARKET">${market}</field><field name="DIGIT">${digit}</field><field name="TICKS">${ticks}</field></block>`;
 const chance = (l: Leg, window: number) => `<block type="nx_digit_chance"><field name="KIND">${CHANCE_KIND[l.side]}</field><field name="DIGIT">${l.barrier ?? 0}</field><field name="COUNT">${window}</field></block>`;
 const digitField = (l: Leg) => (needsBarrier(l.side) ? String(l.barrier ?? 0) : 'null'); // 'null' clears the digit for Even/Odd and Rise/Fall
@@ -202,4 +227,4 @@ export const toAdv = (b: BotSpec): AdvSpec => {
 };
 
 /** Builder helpers shared with alpha.ts (the Alpha Digit Switcher bots). */
-export const xmlKit = { Vars, chain, ifElse, compare, arith, notify, notifyJoin, switchTrade, chance, num, shadowNum, id, reset: () => { seq = 0; } };
+export const xmlKit = { joinNotify, Vars, chain, ifElse, compare, arith, notify, notifyJoin, switchTrade, chance, num, shadowNum, id, reset: () => { seq = 0; } };
