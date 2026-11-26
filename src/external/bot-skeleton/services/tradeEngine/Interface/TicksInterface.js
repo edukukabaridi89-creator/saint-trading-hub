@@ -12,6 +12,7 @@ const getTicksInterface = tradeEngine => {
         getLastDigitList: (...args) => tradeEngine.getLastDigitList(...args),
         switchTrade: (...args) => tradeEngine.switchTrade(...args),
         scanMarkets: (...args) => tradeEngine.scanMarkets(...args),
+        metric: (...args) => tradeEngine.metric(...args),
         rotateMarket: (...args) => tradeEngine.rotateMarket(...args),
     };
 };

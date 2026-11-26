@@ -164,6 +164,7 @@ export const ToolboxItems = () =>
                 <Block type='nx_purchase_any' />
                 <Block type='nx_switch_trade' />
                 <Block type='nx_scan_markets' />
+                <Block type='nx_scan_pick' />
                 <Block type='strategy_rotate_market' />
                 <Block type='chartlord_best_market' />
             </Category>
@@ -385,6 +386,7 @@ export const ToolboxItems = () =>
                     <Block type='tick' />
                     <Block type='last_digit' />
                     <Block type='nx_digit_chance' />
+                    <Block type='nx_metric' />
                     <Block type='stat' />
                     <Block type='stat_list' />
                     <Block type='ticks' />

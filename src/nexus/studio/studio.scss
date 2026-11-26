@@ -97,3 +97,35 @@
 }
 .nx-new { margin-inline-start: 0.6rem; padding: 0.1rem 0.5rem; border-radius: 3px; background: var(--button-primary-default, #ff444f); color: var(--text-colored-background, #fff); font-size: 0.9rem; font-weight: 700; letter-spacing: 0.04em; vertical-align: middle; }
 @keyframes studioPulse { 50% { box-shadow: 0 0 0 5px rgba(255, 68, 79, 0.2); } }
+
+.studio__rules {
+    margin: 0 0 12px;
+    padding-left: 18px;
+    font-size: 13px;
+    line-height: 1.45;
+    li { margin-bottom: 6px; }
+}
+
+.studio__grid--3 { grid-template-columns: 200px minmax(0, 1fr) 320px; }
+@media (max-width: 1000px) { .studio__grid--3 { grid-template-columns: 1fr; } }
+.studio__small { font-size: 12px; opacity: .75; margin: 6px 0; }
+.studio__projects ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.studio__projects li { display: flex; align-items: center; gap: 4px; }
+.studio__projects li button:first-child { flex: 1; text-align: left; background: none; border: 0; padding: 6px; cursor: pointer; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio__projects li.is-on button:first-child { font-weight: 700; }
+.studio__x { background: none; border: 0; cursor: pointer; color: inherit; opacity: .6; }
+.studio__tabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+.studio__tabs button { border: 1px solid rgba(128,128,128,.4); background: none; color: inherit; padding: 4px 10px; border-radius: 14px; cursor: pointer; font-size: 12px; }
+.studio__tabs button.is-on { background: #ff444f; border-color: #ff444f; color: #fff; }
+.studio__checks { list-style: none; margin: 0 0 10px; padding: 0; font-size: 13px; }
+.studio__checks li { margin-bottom: 8px; display: flex; flex-direction: column; }
+.studio__checks li.ok b { color: #1a9e55; }
+.studio__checks li.bad b { color: #e0303d; }
+.studio__checks span { font-size: 12px; opacity: .8; }
+.studio__outline { font-size: 11px; max-height: 260px; overflow: auto; background: rgba(128,128,128,.12); padding: 8px; border-radius: 8px; white-space: pre; }
+.studio__sim div { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 3px 0; }
+.studio__typing { display: inline-flex; gap: 4px; }
+.studio__typing span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .4; animation: studiopulse 1s infinite; }
+.studio__typing span:nth-child(2) { animation-delay: .15s; }
+.studio__typing span:nth-child(3) { animation-delay: .3s; }
+@keyframes studiopulse { 50% { opacity: 1; } }

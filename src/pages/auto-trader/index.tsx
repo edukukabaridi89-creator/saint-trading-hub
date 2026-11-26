@@ -16,6 +16,7 @@ const Banner = observer(() => {
     let cls = 'idle', text = `No scan yet. Click Scan Markets to find the best volatility for ${label}.`;
     if (sc?.expired === 'time') (cls = 'expired'), (text = 'Scan expired — new scan needed.');
     else if (sc?.expired === 'drift') (cls = 'expired'), (text = "Strategy expired — the market's digit pattern changed. New scan needed.");
+    else if (sc && auto.ai && nexus.autoOn && auto.keep && auto.entered) (cls = 'signal'), (text = `Running ${label} on every tick. Press STOP AI to stop.`);
     else if (sc && auto.signal) (cls = 'signal'), (text = auto.ai && nexus.autoOn ? `Cursor is on ${sc.trigger} — AI is entering ${label} now.` : `ENTRY SIGNAL — the cursor is on ${sc.trigger}. Run ${label} now!`);
     else if (sc) (cls = 'ready'), (text = `${symbolName(sc.symbol)} · wait for the cursor to land on ${sc.trigger}${auto.ai && nexus.autoOn ? ' — AI is waiting.' : '.'}  Valid for ${mmss(left)}`);
     return <div className={`nx-banner nx-banner--${cls}`}>{text}</div>;
@@ -41,6 +42,11 @@ export const AutoTraderPage = observer(() => {
                 </label>
 
                 <label className='nx-check'>
+                    <input type='checkbox' checked={auto.keep} onChange={e => (auto.keep = e.target.checked)} />
+                    <span>After the entry, keep trading<small>{auto.keep ? 'Waits for the entry digit once, then trades on the ticks that follow without waiting for the entry again.' : 'Waits for the entry digit before every single trade.'}</small></span>
+                </label>
+
+                <label className='nx-check'>
                     <input type='checkbox' checked={auto.mg.on} onChange={e => (auto.mg.on = e.target.checked)} />
                     <span>Martingale on loss<small>Multiply the stake after each loss, reset after a win.</small></span>
                 </label>
@@ -50,6 +56,11 @@ export const AutoTraderPage = observer(() => {
                         <Field label='Max steps'><Num int min={1} max={10} value={auto.mg.max} onChange={v => (auto.mg.max = v)} /></Field>
                     </div>
                 )}
+
+                <div className='nx-row'>
+                    <Field label='Take profit (0 = off)'><Num min={0} step={1} value={auto.tp} onChange={v => (auto.tp = v)} /></Field>
+                    <Field label='Stop loss (0 = off)'><Num min={0} step={1} value={auto.sl} onChange={v => (auto.sl = v)} /></Field>
+                </div>
 
                 <Field label='Scan valid for'>
                     <select className='nx-input' value={auto.ttl} onChange={e => (auto.ttl = Number(e.target.value))}>

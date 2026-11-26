@@ -1,5 +1,7 @@
 import { applySpec, templateName } from './builder-core';
 import { buildAdvancedXml, toAdv, validateAdv } from './advanced';
+import { buildPlanXml } from './plan-xml';
+import { validatePlan } from './plan';
 import type { BotSpec } from './bot-spec';
 
 /** Loads the strategy template the same way the Quick Strategy form does (one lazy chunk per template). */
@@ -7,6 +9,11 @@ const loadTemplate = async (name: string): Promise<string> => (await import(/* w
 
 /** Bot Builder XML for a finished bot. */
 export const buildBotXml = async (spec: BotSpec): Promise<string> => {
+    if (spec.plan) {
+        const problems = validatePlan(spec.plan);
+        if (problems.length) throw new Error(problems.join(' '));
+        return buildPlanXml(spec.plan);
+    }
     if (spec.adv) {
         const a = toAdv(spec);
         const problems = validateAdv(a);

@@ -229,6 +229,7 @@ export const opening = (): Turn => ({
         { label: 'Over 2 with martingale', text: 'Over 2 on Volatility 100 (1s), 1 tick, martingale x2' },
         { label: 'Even, recover on Odd', text: 'Even on Volatility 50, 1 tick, stake 1, martingale x2, recover on odd, take profit 10, stop loss 30' },
         { label: 'Rise, Vol 75, 5 ticks', text: 'Rise on Volatility 75, 5 ticks, stake 2' },
+        { label: 'Even on a 70%+ volatility, recover smartly', text: 'Trade even on the volatility with 70% and above, martingale 2. After a loss recover on a different volatility with the likelier of over 4 or under 4, and after 2 losses switch to over 4' },
     ],
     expecting: 'symbol',
     complete: false,

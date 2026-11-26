@@ -9,6 +9,7 @@ import { notify } from '../utils/broadcast';
 import { getDirection, getLastDigit } from '../utils/helpers';
 import { expectPositiveInteger } from '../utils/sanitize';
 import * as constants from './state/constants';
+import { metricValue } from '../utils/metrics';
 
 let tickListenerKey;
 
@@ -25,6 +26,8 @@ const digitPct = (digits, kind, d) => {
         UNDER: x => x < d,
     };
     const pct = k => (digits.filter(hit[k]).length * 100) / digits.length;
+    if (kind === 'EVENODD') return Math.max(pct('EVEN'), pct('ODD'));
+    if (kind === 'OVERUNDER') return Math.max(pct('OVER'), pct('UNDER'));
     if (kind === 'ANY') return Math.max(pct('EVEN'), pct('ODD'), pct('OVER'), (digits.filter(x => x < d + 1).length * 100) / digits.length);
     return pct(kind);
 };
@@ -89,9 +92,11 @@ export default Engine =>
          * market where `kind` appears most. Returns the market moved to, or '' if none clears `threshold`.
          * Uses plain ticks_history requests (4 at a time) and keeps the result for 15 s so it is cheap to call every trade. */
         async scanMarkets(opts = {}) {
-            const { scope = 'all', kind = 'EVEN', digit = 5, count = 100, condition = 'ABOVE', threshold = 0 } = opts;
+            const { scope = 'all', kind = 'EVEN', digit = 5, count = 100, condition = 'ABOVE', threshold = 0, other = false } = opts;
             const n = Math.max(5, Math.min(1000, Number(count) || 100));
-            const symbols = scope === 'all' ? SCAN_SYMBOLS : [this.symbol || this.options.symbol];
+            const here = this.symbol || this.options.symbol;
+            const symbols = scope === 'all' ? SCAN_SYMBOLS : [here];
+            const ranked = other ? symbols.filter(sym => sym !== here) : symbols;
             const fresh = Date.now() - scan_cache.at < SCAN_TTL_MS && scan_cache.count >= n;
             if (!fresh) scan_cache = { at: Date.now(), count: n, data: {} };
             const todo = symbols.filter(sym => !scan_cache.data[sym]);
@@ -112,7 +117,7 @@ export default Engine =>
             }
             const above = condition !== 'BELOW';
             let best = null;
-            symbols.forEach(sym => {
+            ranked.forEach(sym => {
                 const digits = (scan_cache.data[sym] || []).slice(-n);
                 if (!digits.length) return;
                 const pct = digitPct(digits, kind, Number(digit));
@@ -133,6 +138,14 @@ export default Engine =>
             if (!best) return '';
             if (best.sym !== (this.symbol || this.options.symbol)) await this.switchTrade({ symbol: best.sym });
             return best.sym;
+        }
+
+        /* Nexus: a market measurement (run lengths, SMA, EMA, RSI, price, last digit, hour). NaN-safe: returns -1 until there is enough data. */
+        async metric(kind, arg = 0) {
+            const prices = await this.getTicks();
+            const digits = this.getLastDigitsFromList(prices);
+            const v = metricValue(String(kind), arg, prices.slice(-1000), digits.slice(-1000));
+            return Number.isFinite(v) ? v : -1;
         }
 
         /* Nexus: move to the next market in the list. */

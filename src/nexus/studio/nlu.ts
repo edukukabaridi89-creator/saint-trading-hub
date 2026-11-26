@@ -55,7 +55,7 @@ const parseEntry = (t: string): { t: string; entry?: Entry } => {
     return { t };
 };
 
-const parseSide = (t: string): { t: string; side?: Side; barrier?: number } => {
+export const parseSide = (t: string): { t: string; side?: Side; barrier?: number } => {
     const digitFirst: [RegExp, Side][] = [
         [/\b(?:over|above|higher than|greater than)\s*(\d)\b/, 'DIGITOVER'],
         [/\b(?:under|below|lower than|less than)\s*(\d)\b/, 'DIGITUNDER'],

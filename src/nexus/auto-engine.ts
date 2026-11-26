@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { observable, runInAction } from 'mobx';
 import { SYMBOLS } from './config';
+import { celebrateTP } from './celebrate';
 import { dispatch } from './dispatcher';
 import { SpeedGate } from './gate';
 import { edgeOf as edgeFor, entryDigit, winFn, type Suggestion, type TradeKind } from './signals';
@@ -25,6 +26,10 @@ export const auto = observable({
     stake: 1,
     ai: true, // true: AI waits for the entry digit and trades; false: user trades manually on the signal
     mg: { on: false, mult: 2, max: 5 }, // martingale on loss
+    keep: true, // after the entry digit has come once, keep trading on every following tick (martingale applies) until stopped
+    entered: false, // the entry has happened in this run
+    tp: 0, // take profit (0 = off)
+    sl: 0, // stop loss (0 = off)
     ttl: 120, // scan validity (seconds)
     rescan: false, // re-scan automatically when a scan/strategy expires
     scan: null as Scan | null,
@@ -43,6 +48,7 @@ const edgeOf = (dist: number[]) => edgeFor(dist, auto.type, auto.barrier);
 
 export const resetScan = () =>
     runInAction(() => {
+        auto.entered = false;
         auto.scan = null;
         auto.signal = false;
         nexus.autoOn = false;
@@ -70,6 +76,7 @@ export const scanMarkets = (): boolean => {
 
 const expire = (reason: 'time' | 'drift') => {
     if (!auto.scan || auto.scan.expired) return;
+    if (nexus.autoOn && auto.entered && auto.keep) return; // a run that has started keeps going until the user stops it (or TP / SL)
     runInAction(() => {
         auto.scan!.expired = reason;
         auto.signal = false;
@@ -91,15 +98,18 @@ const place = async (symbol: string) => {
             auto.last = r.error;
             return;
         }
-        auto.pnl += r.profit ?? 0;
+        auto.pnl = Math.round((auto.pnl + (r.profit ?? 0)) * 100) / 100;
         if (r.won) (auto.wins++, (auto.losses = 0));
         else (auto.lost++, (auto.losses = auto.mg.on && auto.losses >= auto.mg.max ? 0 : auto.losses + 1)); // cycle back after max steps
         auto.last = `${r.won ? 'Won' : 'Lost'} ${Math.abs(r.profit ?? 0).toFixed(2)}`;
+        if (nexus.autoOn && auto.tp > 0 && auto.pnl >= auto.tp) { nexus.autoOn = false; auto.entered = false; auto.last = celebrateTP(auto.pnl); }
+        else if (nexus.autoOn && auto.sl > 0 && auto.pnl <= -auto.sl) { nexus.autoOn = false; auto.entered = false; auto.last = `Stop loss reached (${auto.pnl.toFixed(2)}). Stopped.`; }
     });
 };
 
 export const startAi = () => {
     if (!auto.scan || auto.scan.expired) return nexus.log('Scan the markets first — new scan needed.');
+    runInAction(() => (auto.entered = false));
     nexus.autoOn = true;
 };
 export const runNow = () => {
@@ -130,7 +140,12 @@ export const useAutoEngine = () =>
             if (signal && !auto.signal && !auto.ai) beep();
             if (signal !== auto.signal) runInAction(() => (auto.signal = signal));
             if (seq % 10 === 0 && sc.edge - edgeOf(hub.distribution(sym)) >= DRIFT_POINTS) return expire('drift');
-            if (nexus.autoOn && auto.ai && signal && gate.can(sym, seq)) gate.run(sym, seq, () => place(sym));
+            // the entry digit is waited for ONCE; after that (keep) every following tick trades, with the martingale, until stopped
+            const go = signal || (auto.keep && auto.entered);
+            if (nexus.autoOn && auto.ai && go && gate.can(sym, seq)) {
+                if (!auto.entered) runInAction(() => (auto.entered = true));
+                gate.run(sym, seq, () => place(sym));
+            }
         });
         const clock = setInterval(() => {
             if (!auto.scan) return; // nothing to count down
@@ -148,6 +163,7 @@ export const loadSuggestion = (s: Suggestion) =>
         auto.barrier = s.barrier;
         auto.scan = { symbol: s.symbol, trigger: s.trigger, rate: s.rate, samples: s.samples, edge: s.edge, takenAt: Date.now(), ranking: [{ id: s.symbol, edge: s.edge }], expired: null };
         auto.signal = false;
+        auto.entered = false;
         auto.now = Date.now();
         nexus.autoOn = false;
     });

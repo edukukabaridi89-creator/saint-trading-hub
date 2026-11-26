@@ -1,4 +1,5 @@
 import { SYMBOLS, symbolName } from '../config';
+import type { Plan } from './plan';
 
 export type Side = 'DIGITEVEN' | 'DIGITODD' | 'DIGITOVER' | 'DIGITUNDER' | 'DIGITMATCH' | 'DIGITDIFF' | 'CALL' | 'PUT';
 export type Progression = 'flat' | 'martingale' | 'reverse_martingale' | 'dalembert' | 'reverse_dalembert' | 'oscars_grind' | 'one_three_two_six';
@@ -28,6 +29,7 @@ export type BotSpec = {
     takeProfit: number;
     stopLoss: number;
     entry: { mode: 'any' } | { mode: 'digit'; op: DigitOp; digit: number };
+    plan?: Plan; // built by the plain-English brain (brain.ts); when present it decides the whole bot
     adv?: AdvExtras;
 };
 

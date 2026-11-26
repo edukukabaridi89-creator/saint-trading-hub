@@ -1,10 +1,11 @@
 jest.mock('@/constants/backend-error-messages', () => ({ getLocalizedErrorMessage: x => x }), { virtual: true });
 jest.mock('@deriv-com/translations', () => ({ localize: x => x }));
+jest.mock('../../utils/cliTools', () => ({}), { virtual: true });
 jest.mock('lodash.debounce', () => f => f);
 global.mockSend = jest.fn();
 const mockSend = global.mockSend;
 jest.mock('../../../api/api-base', () => ({ api_base: { api: { send: (...a) => mockSend(...a) } } }));
-jest.mock('../../../../utils/observer', () => ({ observer: {} }));
+jest.mock('../../../../utils/observer', () => ({ observer: { emit: () => {} } }));
 jest.mock('../../../../utils/binary-utils', () => ({ getLast: a => a[a.length - 1] }));
 jest.mock('../../utils/helpers', () => ({ getDirection: () => 'x', getLastDigit: s => Number(String(s).slice(-1)) }));
 jest.mock('../../utils/sanitize', () => ({ expectPositiveInteger: x => x }));
@@ -32,4 +33,17 @@ it('scan picks the market with the most even digits and switches to it', async (
     expect(mockSend.mock.calls.length).toBe(calls);
     expect(e.symbol).toBe('R_50'); // the ODD scan moved there
     expect(await e.rotateMarket()).toBe('R_75');
+});
+
+it('scans for the likelier of two outcomes and can insist on a different market', async () => {
+    mockSend.mockImplementation(async ({ ticks_history }) => ({ pip_size: 1, history: { prices: prices[ticks_history] ?? [1.1] } }));
+    const e = new Engine();
+    e.symbol = 'R_25'; e.options = { symbol: 'R_25' };
+    e.switchTrade = jest.fn(async c => { e.symbol = c.symbol; });
+    // R_25 is 100% even and the best, but we ask for a different one
+    const other = await e.scanMarkets({ scope: 'all', kind: 'EVENODD', digit: 0, count: 4, condition: 'ABOVE', threshold: 50, other: true });
+    expect(other).not.toBe('R_25');
+    expect(other).not.toBe('');
+    e.symbol = 'R_25';
+    expect(await e.scanMarkets({ scope: 'all', kind: 'OVERUNDER', digit: 4, count: 4, condition: 'ABOVE', threshold: 100, other: false })).not.toBe('');
 });

@@ -7,7 +7,7 @@ const base = () => ({
     colourTertiary: window.Blockly.Colours.Special1.colourTertiary,
 });
 const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => [String(n), String(n)]);
-const KINDS = [[localize('Even'), 'EVEN'], [localize('Odd'), 'ODD'], [localize('Over'), 'OVER'], [localize('Under'), 'UNDER'], [localize('Any of the four'), 'ANY']];
+const KINDS = [[localize('Even'), 'EVEN'], [localize('Odd'), 'ODD'], [localize('Over'), 'OVER'], [localize('Under'), 'UNDER'], [localize('Any of the four'), 'ANY'], [localize('Even or Odd (the likelier)'), 'EVENODD'], [localize('Over or Under (the likelier)'), 'OVERUNDER']];
 const menu = menu_ => modifyContextMenu(menu_);
 const gen = () => window.Blockly.JavaScript.javascriptGenerator;
 
@@ -98,3 +98,68 @@ window.Blockly.Blocks.strategy_rotate_market = {
     customContextMenu: menu,
 };
 gen().forBlock.strategy_rotate_market = () => 'Bot.rotateMarket();\n';
+
+/* Value block used by Bot Studio plans: scans like "Best market" but with every setting visible on the block.
+ * Returns the market it moved to, or empty text when no market reaches the percentage (so the bot can skip that tick). */
+window.Blockly.Blocks.nx_scan_pick = {
+    init() {
+        this.jsonInit({
+            message0: localize('Scan {{ scope }} for {{ kind }} digit {{ digit }} at {{ threshold }} % or more in last {{ count }} ticks, {{ other }}', {
+                scope: '%1', kind: '%2', digit: '%3', threshold: '%4', count: '%5', other: '%6',
+            }),
+            args0: [
+                { type: 'field_dropdown', name: 'SCOPE', options: [[localize('all markets'), 'all'], [localize('this market'), 'this']] },
+                { type: 'field_dropdown', name: 'KIND', options: KINDS },
+                { type: 'field_dropdown', name: 'DIGIT', options: DIGITS },
+                { type: 'field_number', name: 'THRESHOLD', value: 70, min: 0, max: 100, precision: 1 },
+                { type: 'field_number', name: 'COUNT', value: 100, min: 10, max: 1000, precision: 1 },
+                { type: 'field_dropdown', name: 'OTHER', options: [[localize('any market'), 'any'], [localize('a different market'), 'other']] },
+            ],
+            inputsInline: true,
+            output: 'String',
+            outputShape: window.Blockly.OUTPUT_SHAPE_ROUND,
+            ...base(),
+            tooltip: localize('Moves the bot to the market where the chosen outcome is most frequent, but only if it reaches the percentage. Returns the market, or empty text if none does.'),
+            category: window.Blockly.Categories.Before_Purchase,
+        });
+    },
+    meta() {
+        return { display_name: localize('Scan for percentage'), description: localize('Finds and moves to a market that reaches a percentage.'), key_words: localize('scan percentage volatility best market') };
+    },
+    customContextMenu: menu,
+};
+gen().forBlock.nx_scan_pick = block =>
+    [`Bot.scanMarkets({ scope: '${block.getFieldValue('SCOPE')}', kind: '${block.getFieldValue('KIND')}', digit: ${block.getFieldValue('DIGIT')}, count: ${Number(block.getFieldValue('COUNT')) || 100}, condition: 'ABOVE', threshold: ${Number(block.getFieldValue('THRESHOLD')) || 0}, other: ${block.getFieldValue('OTHER') === 'other'} })`, gen().ORDER_FUNCTION_CALL];
+
+/* Value block used by Bot Studio plans: one market measurement as a number (run lengths, SMA, EMA, RSI, price, last digit, hour). -1 = not enough data yet. */
+const METRIC_OPTIONS = [
+    [localize('current run of Even digits'), 'RUN_EVEN'], [localize('current run of Odd digits'), 'RUN_ODD'],
+    [localize('current run of digits over'), 'RUN_OVER'], [localize('current run of digits under'), 'RUN_UNDER'], [localize('current run of the same digit'), 'RUN_DIGIT'],
+    [localize('current run of rising ticks'), 'RUN_RISE'], [localize('current run of falling ticks'), 'RUN_FALL'],
+    [localize('SMA of price, period'), 'SMA'], [localize('EMA of price, period'), 'EMA'], [localize('RSI of price, period'), 'RSI'],
+    [localize('last price'), 'PRICE'], [localize('last digit'), 'LASTDIGIT'], [localize('hour of the day (UTC)'), 'HOUR'],
+];
+window.Blockly.Blocks.nx_metric = {
+    init() {
+        this.jsonInit({
+            message0: localize('Market measure: {{ metric }} {{ arg }}', { metric: '%1', arg: '%2' }),
+            args0: [
+                { type: 'field_dropdown', name: 'METRIC', options: METRIC_OPTIONS },
+                { type: 'field_number', name: 'ARG', value: 0, min: 0, max: 1000, precision: 1 },
+            ],
+            inputsInline: true,
+            output: 'Number',
+            outputShape: window.Blockly.OUTPUT_SHAPE_ROUND,
+            colour: window.Blockly.Colours.Base.colour,
+            colourSecondary: window.Blockly.Colours.Base.colourSecondary,
+            colourTertiary: window.Blockly.Colours.Base.colourTertiary,
+            tooltip: localize('A measurement of the recent ticks: how long a run of Even/Odd/Over/Under/rising/falling ticks is, SMA, EMA, RSI, the last price or digit, or the hour. The number next to it is the digit (for runs over/under/same digit) or the period (SMA, EMA, RSI). Returns -1 until there is enough data.'),
+            category: window.Blockly.Categories.Tick_Analysis,
+        });
+    },
+    meta() {
+        return { display_name: localize('Market measure'), description: localize('Run lengths, SMA, EMA, RSI and more from recent ticks.'), key_words: localize('run streak sma ema rsi indicator consecutive') };
+    },
+    customContextMenu: menu,
+};
+gen().forBlock.nx_metric = block => [`Bot.metric('${block.getFieldValue('METRIC')}', ${Number(block.getFieldValue('ARG')) || 0})`, gen().ORDER_FUNCTION_CALL];

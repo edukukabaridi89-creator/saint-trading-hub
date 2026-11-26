@@ -8,7 +8,11 @@ import { SYMBOLS, symbolName } from '@/nexus/config';
 import { suggest } from '@/nexus/signals';
 import { nexus } from '@/nexus/store';
 import { hub } from '@/nexus/ticks-hub';
-import { DigitCircles, Panel, useHub } from '@/nexus/ui';
+import { observable, runInAction } from 'mobx';
+import { DigitCircles, Field, Num, Panel, useHub } from '@/nexus/ui';
+
+/** What the user wants the signals for: one market or all of them. */
+const pref = observable({ market: 'all' });
 
 /** Loads the suggestion into Auto Trader: type, barrier and entry digit are filled, just press START AI / RUN NOW. */
 const toAutoTrader = s => {
@@ -31,7 +35,7 @@ const toBotBuilder = async s => {
         stake,
         profit: +(stake * 10).toFixed(2), // target profit and max loss are just starting values, editable in Bot Builder
         loss: +(stake * 20).toFixed(2),
-        size: auto.mg.mult,
+        size: auto.mg.on ? auto.mg.mult : 1,
         last_digit_prediction: s.barrier,
         type: s.type,
         action: 'EDIT',
@@ -41,12 +45,33 @@ const toBotBuilder = async s => {
 
 export const Signals = observer(() => {
     useHub(SYMBOLS.map(m => m.id));
-    const rows = SYMBOLS.filter(m => !hub.isUnavailable(m.id)).map(m => ({ id: m.id, sug: suggest(m.id) }));
+    const rows = SYMBOLS.filter(m => !hub.isUnavailable(m.id) && (pref.market === 'all' || m.id === pref.market)).map(m => ({ id: m.id, sug: suggest(m.id) }));
     const rank = [...rows].filter(r => r.sug).sort((a, b) => b.sug.z - a.sug.z).map(r => r.id);
     return (
         <>
+            <Panel title='Your settings (used when you load a signal)'>
+                <div className='nx-row'>
+                    <Field label='Stake'><Num min={0.35} step={0.1} value={auto.stake} onChange={v => (auto.stake = v)} /></Field>
+                    <Field label='Signals for'>
+                        <select className='nx-input' value={pref.market} onChange={e => runInAction(() => (pref.market = e.target.value))}>
+                            <option value='all'>All markets</option>
+                            {SYMBOLS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </select>
+                    </Field>
+                </div>
+                <label className='nx-check'>
+                    <input type='checkbox' checked={auto.mg.on} onChange={e => (auto.mg.on = e.target.checked)} />
+                    <span>Martingale on loss<small>Multiply the stake after each loss, reset after a win.</small></span>
+                </label>
+                {auto.mg.on && (
+                    <div className='nx-row'>
+                        <Field label='Multiplier'><Num min={1.1} step={0.1} value={auto.mg.mult} onChange={v => (auto.mg.mult = v)} /></Field>
+                        <Field label='Max steps'><Num int min={1} max={10} value={auto.mg.max} onChange={v => (auto.mg.max = v)} /></Field>
+                    </div>
+                )}
+            </Panel>
             <div className='nx-muted'>
-                Every volatility with its last-1,000-tick digit circles and the trade type whose winning digits currently stand out the most. Digit frequencies describe the past, they don't guarantee the next result.
+                Every volatility with its last-1,000-tick digit circles and the balanced trade type (Even, Odd, Over 1-6 or Under 3-8) whose winning digits currently stand out the most. Digit frequencies describe the past, they don't guarantee the next result.
             </div>
             <div className='nx-grid nx-grid--signals'>
                 {rows.map(({ id, sug }) => {
@@ -68,7 +93,7 @@ export const Signals = observer(() => {
                             )}
                             <div className='nx-row'>
                                 <button className='nx-btn nx-btn--go nx-btn--sm' disabled={!sug} onClick={() => toAutoTrader(sug)}>Load in Auto Trader</button>
-                                <button className='nx-btn nx-btn--sm' disabled={!sug} onClick={() => toBotBuilder(sug)}>Open in Bot Builder</button>
+                                <button className='nx-btn nx-btn--sm' disabled={!sug} onClick={() => toBotBuilder(sug)}>Load in Bot Builder</button>
                             </div>
                         </Panel>
                     );

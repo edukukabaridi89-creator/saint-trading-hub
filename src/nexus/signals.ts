@@ -30,11 +30,15 @@ export const entryDigit = (digits: number[], win: (d: number) => boolean) => {
     return best;
 };
 
+/**
+ * The signals only suggest balanced trades: Even / Odd, Over 1-6 and Under 3-8 (the mirror of Over 1-6).
+ * Very high-risk ones (Under 1, Over 8, Under 2, Over 7, Matches) win so rarely that they are never suggested.
+ */
 export const CANDIDATES: Candidate[] = [
     { type: 'DIGITEVEN', barrier: 0 },
     { type: 'DIGITODD', barrier: 0 },
-    ...Array.from({ length: 9 }, (_, b) => ({ type: 'DIGITOVER' as const, barrier: b })), // Over 0-8
-    ...Array.from({ length: 9 }, (_, i) => ({ type: 'DIGITUNDER' as const, barrier: i + 1 })), // Under 1-9
+    ...Array.from({ length: 6 }, (_, i) => ({ type: 'DIGITOVER' as const, barrier: i + 1 })), // Over 1-6
+    ...Array.from({ length: 6 }, (_, i) => ({ type: 'DIGITUNDER' as const, barrier: i + 3 })), // Under 3-8
 ];
 
 const cache = new Map<string, { rev: number; value: Suggestion | null }>();

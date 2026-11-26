@@ -1,4 +1,5 @@
 import { openXmlInBotBuilder } from '@/nexus/open-bot';
+import { BASIC_BOT_NAME, buildBasicXml } from '@/nexus/studio/basic';
 
 /** Tier by power index (structure only: strategy depth, stake scaling, digit statistics; not a profit forecast). */
 const TIERS = [
@@ -13,6 +14,7 @@ const TIERS = [
  * once (power = strategy depth + stake-scaling + digit-statistics logic, 0-100); update them if you edit a bot.
  */
 const SOURCES = [
+    { title: BASIC_BOT_NAME, about: 'The simple starter. Set your stake, martingale, take profit and stop loss in the first block, change the trade type if you like, and press Run.', types: ['Even'], power: 40, load: async () => ({ default: buildBasicXml() }) },
     { title: 'Halo Hunter', about: 'Over bot that scales its stake as it trades. Open it to see and tweak the rules.', types: ['Over'], power: 35, load: () => import('./bots/dollar-hunter.xml') },
     { title: 'Digit Chapel', about: 'Over bot built around last-digit statistics. Open it to see and tweak the rules.', types: ['Over'], power: 35, load: () => import('./bots/nexus.xml') },
     { title: 'Over 2 Sanctum', about: 'Over bot with stake scaling and digit-statistics logic. Open it to see and tweak the rules.', types: ['Over'], power: 99, load: () => import('./bots/over-2.xml') },
